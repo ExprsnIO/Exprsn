@@ -1,0 +1,2278 @@
+-- =============================================
+-- EXPRSN PLATFORM - ENHANCED SCHEMA FOR DECENTRALIZATION
+-- =============================================
+
+-- Enable necessary extensions
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+CREATE EXTENSION IF NOT EXISTS "hstore";
+CREATE EXTENSION IF NOT EXISTS "pg_trgm";
+
+-- =============================================
+-- ENHANCED CORE TYPES
+-- =============================================
+
+-- Create custom types for the system
+CREATE TYPE subscription_status AS ENUM ('active', 'expired', 'cancelled', 'pending');
+CREATE TYPE profile_type AS ENUM ('personal', 'professional', 'business', 'creative');
+CREATE TYPE certificate_status AS ENUM ('active', 'revoked', 'expired');
+CREATE TYPE token_validity_type AS ENUM ('permanent', 'expiry_date', 'duration_days', 'max_uses');
+CREATE TYPE token_visibility AS ENUM ('public', 'private', 'restricted');
+CREATE TYPE storage_provider AS ENUM ('s3', 'gcs', 'azure', 'cloudflare', 'backblaze', 'ipfs', 'arweave', 'custom');
+CREATE TYPE payment_schedule AS ENUM ('one_time', 'monthly', 'yearly', 'weekly');
+CREATE TYPE payout_status AS ENUM ('pending', 'processing', 'completed', 'failed');
+CREATE TYPE report_status AS ENUM ('open', 'under_review', 'resolved', 'rejected');
+CREATE TYPE moderation_action AS ENUM ('none', 'warn', 'hide_content', 'restrict_account', 'suspend_account', 'ban_account');
+
+-- New encryption methods enum for enhanced security options
+CREATE TYPE encryption_method AS ENUM (
+    'bcrypt', 
+    'argon2id', 
+    'scrypt', 
+    'pbkdf2', 
+    'aes256gcm', 
+    'chacha20poly1305', 
+    'rsa', 
+    'ed25519', 
+    'ecies'
+);
+
+-- Create enum for version change types
+CREATE TYPE version_change_type AS ENUM (
+    'major',  -- Breaking changes
+    'minor',  -- New features, backward compatible
+    'patch',  -- Bug fixes, backward compatible
+    'security' -- Security patches
+);
+
+-- =============================================
+-- CORE USER TABLES (ENHANCED)
+-- =============================================
+
+-- Users table - core user data with enhanced encryption
+CREATE TABLE IF NOT EXISTS public.users (
+    id SERIAL PRIMARY KEY,
+    username VARCHAR(30) NOT NULL,
+    email VARCHAR(255) NOT NULL,
+    password TEXT NOT NULL,
+    encryption_method encryption_method DEFAULT 'bcrypt' NOT NULL,
+    encryption_params JSONB DEFAULT '{"cost": 12}', -- Algorithm-specific parameters
+    role VARCHAR(20) DEFAULT 'user' NOT NULL,
+    display_name VARCHAR(100) NOT NULL,
+    bio TEXT,
+    avatar_url TEXT,
+    subdomain VARCHAR(63),
+    federation_id TEXT,
+    did TEXT, -- Decentralized Identifier
+    public_key TEXT, -- For verification and encryption
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    last_login TIMESTAMP WITH TIME ZONE,
+    verified BOOLEAN DEFAULT FALSE,
+    is_active BOOLEAN DEFAULT TRUE,
+    settings JSONB NOT NULL DEFAULT '{}',
+    current_theme_id INTEGER,
+    default_profile_id INTEGER,
+    totp_secret TEXT,
+    backup_codes JSONB,
+    account_type VARCHAR(20) DEFAULT 'standard',
+    meta_data JSONB,
+    content_pub_key TEXT, -- Public key for content signing
+    content_signature_algo VARCHAR(50) DEFAULT 'ed25519', -- Default signature algorithm
+    CONSTRAINT chk_users_email_format CHECK (email ~* '^[A-Za-z0-9._%-]+@[A-Za-z0-9.-]+[.][A-Za-z]+$'),
+    CONSTRAINT chk_users_username_format CHECK (username ~* '^[a-zA-Z0-9_]{3,30}$'),
+    CONSTRAINT chk_users_subdomain_format CHECK (subdomain IS NULL OR subdomain ~* '^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$'),
+    CONSTRAINT chk_users_password_min_length CHECK (length(password) >= 8)
+);
+
+-- Add user indexes
+CREATE INDEX IF NOT EXISTS idx_users_username ON public.users(username);
+CREATE INDEX IF NOT EXISTS idx_users_email ON public.users(email);
+CREATE INDEX IF NOT EXISTS idx_users_subdomain ON public.users(subdomain);
+CREATE INDEX IF NOT EXISTS idx_users_federation_id ON public.users(federation_id);
+CREATE INDEX IF NOT EXISTS idx_users_current_theme_id ON public.users(current_theme_id);
+CREATE INDEX IF NOT EXISTS idx_users_default_profile_id ON public.users(default_profile_id);
+CREATE INDEX IF NOT EXISTS idx_users_did ON public.users(did);
+
+-- User profiles - support for multiple profiles per user
+CREATE TABLE IF NOT EXISTS public.user_profiles (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    name VARCHAR(100) NOT NULL,
+    profile_type profile_type DEFAULT 'personal' NOT NULL,
+    is_default BOOLEAN DEFAULT FALSE,
+    bio TEXT,
+    avatar_url TEXT,
+    banner_url TEXT,
+    theme_id INTEGER,
+    settings JSONB,
+    visibility VARCHAR(20) DEFAULT 'public',
+    meta_data JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    custom_domain VARCHAR(255),
+    custom_css TEXT,
+    is_active BOOLEAN DEFAULT TRUE,
+    profile_signature TEXT, -- Cryptographic signature of profile data
+    content_cid TEXT -- Content identifier (IPFS/CID) for decentralized storage
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_profiles_user_id ON public.user_profiles(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_profiles_theme_id ON public.user_profiles(theme_id);
+CREATE INDEX IF NOT EXISTS idx_user_profiles_is_default ON public.user_profiles(is_default);
+CREATE INDEX IF NOT EXISTS idx_user_profiles_content_cid ON public.user_profiles(content_cid);
+
+-- Subdomain registrations
+CREATE TABLE IF NOT EXISTS public.subdomain_registrations (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    subdomain VARCHAR(63) NOT NULL,
+    status VARCHAR(20) DEFAULT 'pending' NOT NULL,
+    verification_token TEXT,
+    verified_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    settings JSONB,
+    CONSTRAINT chk_subdomain_format CHECK (subdomain ~* '^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$')
+);
+
+CREATE INDEX IF NOT EXISTS idx_subdomain_registrations_user_id ON public.subdomain_registrations(user_id);
+CREATE INDEX IF NOT EXISTS idx_subdomain_registrations_subdomain ON public.subdomain_registrations(subdomain);
+CREATE INDEX IF NOT EXISTS idx_subdomain_registrations_status ON public.subdomain_registrations(status);
+
+-- Enhanced API tokens with versioning support
+CREATE TABLE IF NOT EXISTS public.api_tokens (
+    id SERIAL PRIMARY KEY,
+    token TEXT NOT NULL,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    name VARCHAR(100) NOT NULL,
+    scope TEXT NOT NULL,
+    last_used_at TIMESTAMP WITH TIME ZONE,
+    expires_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    is_active BOOLEAN DEFAULT TRUE,
+    ip_whitelist TEXT[],
+    version VARCHAR(20) DEFAULT '1.0.0', -- SEMVER format
+    current_version_id INTEGER, -- Latest version reference
+    encryption_method encryption_method DEFAULT 'bcrypt',
+    encryption_params JSONB,
+    token_hash TEXT, -- For verification without exposing the token
+    rotation_period INTERVAL, -- For automatic token rotation
+    last_rotated_at TIMESTAMP WITH TIME ZONE,
+    permissions_schema JSONB, -- Detailed permissions structure
+    token_metadata JSONB -- Additional token information
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_tokens_user_id ON public.api_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_api_tokens_token_hash ON public.api_tokens(token_hash);
+CREATE INDEX IF NOT EXISTS idx_api_tokens_current_version_id ON public.api_tokens(current_version_id);
+
+-- Token version history (for SEMVER versioning)
+CREATE TABLE IF NOT EXISTS public.token_versions (
+    id SERIAL PRIMARY KEY,
+    token_id INTEGER NOT NULL REFERENCES public.api_tokens(id) ON DELETE CASCADE,
+    version VARCHAR(20) NOT NULL, -- SEMVER format (major.minor.patch)
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    change_type version_change_type NOT NULL,
+    change_description TEXT,
+    created_by INTEGER REFERENCES public.users(id) ON DELETE SET NULL,
+    permissions JSONB, -- Snapshot of permissions at this version
+    token_hash TEXT, -- Hash of the token at this version
+    is_deprecated BOOLEAN DEFAULT FALSE,
+    deprecation_reason TEXT,
+    successor_version VARCHAR(20),
+    metadata JSONB,
+    CONSTRAINT unq_token_version UNIQUE (token_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_token_versions_token_id ON public.token_versions(token_id);
+CREATE INDEX IF NOT EXISTS idx_token_versions_version ON public.token_versions(version);
+
+-- =============================================
+-- CONTENT TABLES (ENHANCED FOR DECENTRALIZATION)
+-- =============================================
+
+-- Topics/tags system
+CREATE TABLE public.topics (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    slug VARCHAR(100) NOT NULL,
+    description TEXT,
+    parent_id INTEGER REFERENCES public.topics(id) ON DELETE SET NULL,
+    icon_url TEXT,
+    is_featured BOOLEAN DEFAULT FALSE,
+    post_count INTEGER DEFAULT 0,
+    follower_count INTEGER DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    content_cid TEXT, -- Content ID for decentralized storage
+    signature TEXT, -- Cryptographic signature
+    federation_id TEXT, -- For federation across instances
+    CONSTRAINT unq_topic_name UNIQUE (name),
+    CONSTRAINT unq_topic_slug UNIQUE (slug)
+);
+
+CREATE INDEX IF NOT EXISTS idx_topics_parent_id ON public.topics(parent_id);
+CREATE INDEX IF NOT EXISTS idx_topics_featured ON public.topics(is_featured);
+CREATE INDEX IF NOT EXISTS idx_topics_follower_count ON public.topics(follower_count DESC);
+CREATE INDEX IF NOT EXISTS idx_topics_content_cid ON public.topics(content_cid);
+
+-- Media items table with content addressing
+CREATE TABLE public.media_items (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    storage_provider_id INTEGER REFERENCES public.user_storage_credentials(id) ON DELETE SET NULL,
+    media_type VARCHAR(50) NOT NULL, -- 'image', 'video', 'audio', 'document', etc.
+    mime_type VARCHAR(100) NOT NULL,
+    file_name VARCHAR(255) NOT NULL,
+    file_size BIGINT NOT NULL, -- in bytes
+    original_url TEXT NOT NULL,
+    content_cid TEXT, -- Content identifier (IPFS/CID)
+    content_hash TEXT, -- Cryptographic hash of content
+    hash_algorithm VARCHAR(20) DEFAULT 'sha256', -- Algorithm used for content hash
+    width INTEGER, -- for images/videos
+    height INTEGER, -- for images/videos
+    duration INTEGER, -- for videos/audio (seconds)
+    thumbnail_url TEXT,
+    thumbnail_cid TEXT, -- Content ID for thumbnail
+    media_status VARCHAR(20) DEFAULT 'active', -- 'processing', 'active', 'error', 'removed'
+    processing_error TEXT,
+    alt_text TEXT, -- For accessibility
+    caption TEXT,
+    metadata JSONB, -- EXIF data, video codec info, etc.
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    custom_hash VARCHAR(64),
+    encryption_method encryption_method DEFAULT NULL, -- If content is encrypted
+    encryption_params JSONB, -- Encryption parameters if applicable
+    signature TEXT, -- Digital signature of the creator
+    replicated_on JSONB -- Where content is replicated in the network
+);
+
+CREATE INDEX IF NOT EXISTS idx_media_items_user_id ON public.media_items(user_id);
+CREATE INDEX IF NOT EXISTS idx_media_items_media_type ON public.media_items(media_type);
+CREATE INDEX IF NOT EXISTS idx_media_items_created_at ON public.media_items(created_at);
+CREATE INDEX IF NOT EXISTS idx_media_items_custom_hash ON public.media_items(custom_hash);
+CREATE INDEX IF NOT EXISTS idx_media_items_content_cid ON public.media_items(content_cid);
+CREATE INDEX IF NOT EXISTS idx_media_items_content_hash ON public.media_items(content_hash);
+
+-- Media albums
+CREATE TABLE public.media_albums (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    cover_media_id INTEGER REFERENCES public.media_items(id) ON DELETE SET NULL,
+    item_count INTEGER DEFAULT 0,
+    visibility VARCHAR(20) DEFAULT 'public',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    content_cid TEXT, -- Content ID for decentralized storage
+    signature TEXT -- Cryptographic signature
+);
+
+CREATE INDEX IF NOT EXISTS idx_media_albums_user_id ON public.media_albums(user_id);
+CREATE INDEX IF NOT EXISTS idx_media_albums_content_cid ON public.media_albums(content_cid);
+
+-- Media album items
+CREATE TABLE public.media_album_items (
+    id SERIAL PRIMARY KEY,
+    album_id INTEGER NOT NULL REFERENCES public.media_albums(id) ON DELETE CASCADE,
+    media_id INTEGER NOT NULL REFERENCES public.media_items(id) ON DELETE CASCADE,
+    position INTEGER DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unq_album_media UNIQUE (album_id, media_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_media_album_items_album_id ON public.media_album_items(album_id);
+CREATE INDEX IF NOT EXISTS idx_media_album_items_media_id ON public.media_album_items(media_id);
+
+-- Media transformations (different sizes/formats)
+CREATE TABLE public.media_transformations (
+    id SERIAL PRIMARY KEY,
+    media_id INTEGER NOT NULL REFERENCES public.media_items(id) ON DELETE CASCADE,
+    transformation_type VARCHAR(50) NOT NULL, -- 'thumbnail', 'small', 'medium', 'large', 'compressed', etc.
+    url TEXT NOT NULL,
+    content_cid TEXT, -- Content ID for the transformed version
+    width INTEGER,
+    height INTEGER,
+    file_size BIGINT,
+    quality INTEGER, -- For compression level
+    format VARCHAR(20), -- 'jpg', 'webp', 'mp4', etc.
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    content_hash TEXT, -- Hash of transformed content
+    hash_algorithm VARCHAR(20) DEFAULT 'sha256'
+);
+
+CREATE INDEX IF NOT EXISTS idx_media_transformations_media_id ON public.media_transformations(media_id);
+CREATE INDEX IF NOT EXISTS idx_media_transformations_type ON public.media_transformations(transformation_type);
+CREATE INDEX IF NOT EXISTS idx_media_transformations_content_cid ON public.media_transformations(content_cid);
+
+-- Enhanced Posts table with versioning and content addressing
+CREATE TABLE IF NOT EXISTS public.posts (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    profile_id INTEGER REFERENCES public.user_profiles(id) ON DELETE SET NULL,
+    content TEXT NOT NULL,
+    attachment_urls JSONB,
+    storage_provider_id INTEGER REFERENCES public.user_storage_credentials(id) ON DELETE SET NULL,
+    visibility VARCHAR(20) DEFAULT 'public' NOT NULL,
+    reply_to INTEGER REFERENCES public.posts(id) ON DELETE SET NULL,
+    federation_id TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    metadata JSONB,
+    group_id INTEGER,
+    requires_token BOOLEAN DEFAULT FALSE,
+    scheduled_for TIMESTAMP WITH TIME ZONE,
+    expires_at TIMESTAMP WITH TIME ZONE,
+    location JSONB,
+    edit_history JSONB,
+    custom_css TEXT,
+    language VARCHAR(10),
+    is_original BOOLEAN DEFAULT TRUE, -- Indicates if this is original content or a translation
+    original_post_id INTEGER REFERENCES public.posts(id) ON DELETE SET NULL, -- For translations
+    translation_language VARCHAR(10), -- For translations
+    translation_type VARCHAR(20) DEFAULT 'machine', -- 'machine', 'human', 'community'
+    current_version VARCHAR(20) DEFAULT '1.0.0', -- Current SEMVER version
+    current_version_id INTEGER, -- Reference to current version in post_versions
+    content_cid TEXT, -- Content identifier for decentralized storage
+    content_hash TEXT, -- Cryptographic hash of content
+    hash_algorithm VARCHAR(20) DEFAULT 'sha256',
+    signature TEXT, -- Digital signature of the creator
+    encryption_method encryption_method DEFAULT NULL, -- If content is encrypted
+    encryption_params JSONB, -- Encryption parameters
+    replicated_on JSONB, -- Where content is replicated
+    merkle_root TEXT, -- For verifiable content trees
+    zk_proof TEXT, -- For zero-knowledge proofs if applicable
+    CONSTRAINT chk_posts_content_not_empty CHECK (length(trim(content)) > 0),
+    CONSTRAINT chk_posts_visibility_values CHECK (visibility IN ('public', 'followers', 'private', 'group', 'unlisted'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_posts_user_id ON public.posts(user_id);
+CREATE INDEX IF NOT EXISTS idx_posts_profile_id ON public.posts(profile_id);
+CREATE INDEX IF NOT EXISTS idx_posts_reply_to ON public.posts(reply_to);
+CREATE INDEX IF NOT EXISTS idx_posts_group_id ON public.posts(group_id);
+CREATE INDEX IF NOT EXISTS idx_posts_visibility ON public.posts(visibility);
+CREATE INDEX IF NOT EXISTS idx_posts_federation_id ON public.posts(federation_id);
+CREATE INDEX IF NOT EXISTS idx_posts_storage_provider_id ON public.posts(storage_provider_id);
+CREATE INDEX IF NOT EXISTS idx_posts_created_at ON public.posts(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_posts_user_visibility_created ON public.posts(user_id, visibility, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_posts_scheduled_for ON public.posts(scheduled_for) WHERE scheduled_for IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_posts_expires_at ON public.posts(expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_posts_requires_token ON public.posts(requires_token) WHERE requires_token = true;
+CREATE INDEX IF NOT EXISTS idx_posts_content_gin ON public.posts USING gin(to_tsvector('english', content));
+CREATE INDEX IF NOT EXISTS idx_posts_metadata ON public.posts USING gin(metadata);
+CREATE INDEX IF NOT EXISTS idx_posts_original_post_id ON public.posts(original_post_id) WHERE original_post_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_posts_language ON public.posts(language);
+CREATE INDEX IF NOT EXISTS idx_posts_current_version_id ON public.posts(current_version_id);
+CREATE INDEX IF NOT EXISTS idx_posts_content_cid ON public.posts(content_cid);
+CREATE INDEX IF NOT EXISTS idx_posts_content_hash ON public.posts(content_hash);
+
+-- Post versions table for SEMVER style versioning
+CREATE TABLE public.post_versions (
+    id SERIAL PRIMARY KEY,
+    post_id INTEGER NOT NULL REFERENCES public.posts(id) ON DELETE CASCADE,
+    version VARCHAR(20) NOT NULL, -- SEMVER format (major.minor.patch)
+    content TEXT NOT NULL,
+    attachment_urls JSONB,
+    metadata JSONB,
+    change_type version_change_type NOT NULL,
+    change_description TEXT, -- Description of what changed
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    created_by INTEGER REFERENCES public.users(id) ON DELETE SET NULL,
+    content_cid TEXT, -- Content ID for this specific version
+    content_hash TEXT, -- Hash of this version's content
+    hash_algorithm VARCHAR(20) DEFAULT 'sha256',
+    signature TEXT, -- Digital signature for this version
+    edited_by INTEGER REFERENCES public.users(id) ON DELETE SET NULL,
+    edit_reason TEXT,
+    previous_version VARCHAR(20), -- Link to previous version
+    encryption_method encryption_method DEFAULT NULL,
+    encryption_params JSONB,
+    CONSTRAINT unq_post_version UNIQUE (post_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_versions_post_id ON public.post_versions(post_id);
+CREATE INDEX IF NOT EXISTS idx_post_versions_version ON public.post_versions(version);
+CREATE INDEX IF NOT EXISTS idx_post_versions_created_at ON public.post_versions(created_at);
+CREATE INDEX IF NOT EXISTS idx_post_versions_content_cid ON public.post_versions(content_cid);
+CREATE INDEX IF NOT EXISTS idx_post_versions_content_hash ON public.post_versions(content_hash);
+
+-- Connect posts to media items
+CREATE TABLE public.post_media (
+    id SERIAL PRIMARY KEY,
+    post_id INTEGER NOT NULL REFERENCES public.posts(id) ON DELETE CASCADE,
+    media_id INTEGER NOT NULL REFERENCES public.media_items(id) ON DELETE CASCADE,
+    position INTEGER DEFAULT 0, -- For ordering multiple media items in a post
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    content_cid TEXT, -- Content ID for the joint post-media entity
+    CONSTRAINT unq_post_media_position UNIQUE (post_id, position)
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_media_post_id ON public.post_media(post_id);
+CREATE INDEX IF NOT EXISTS idx_post_media_media_id ON public.post_media(media_id);
+CREATE INDEX IF NOT EXISTS idx_post_media_content_cid ON public.post_media(content_cid);
+
+-- Post tagging
+CREATE TABLE public.post_topics (
+    id SERIAL PRIMARY KEY,
+    post_id INTEGER NOT NULL REFERENCES public.posts(id) ON DELETE CASCADE,
+    topic_id INTEGER NOT NULL REFERENCES public.topics(id) ON DELETE CASCADE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unq_post_topic UNIQUE (post_id, topic_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_topics_post_id ON public.post_topics(post_id);
+CREATE INDEX IF NOT EXISTS idx_post_topics_topic_id ON public.post_topics(topic_id);
+
+-- Post analytics
+CREATE TABLE public.post_analytics (
+    id SERIAL PRIMARY KEY,
+    post_id INTEGER NOT NULL REFERENCES public.posts(id) ON DELETE CASCADE,
+    views INTEGER DEFAULT 0,
+    unique_views INTEGER DEFAULT 0,
+    likes INTEGER DEFAULT 0,
+    reposts INTEGER DEFAULT 0,
+    comments INTEGER DEFAULT 0,
+    shares INTEGER DEFAULT 0,
+    clicks INTEGER DEFAULT 0,
+    save_count INTEGER DEFAULT 0,
+    hide_count INTEGER DEFAULT 0,
+    report_count INTEGER DEFAULT 0,
+    average_read_time INTEGER DEFAULT 0, -- seconds
+    completion_rate NUMERIC(5,2) DEFAULT 0, -- percentage
+    bounce_rate NUMERIC(5,2) DEFAULT 0, -- percentage
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_post_analytics_post_id ON public.post_analytics(post_id);
+
+-- Detailed view tracking
+CREATE TABLE public.post_impressions (
+    id SERIAL PRIMARY KEY,
+    post_id INTEGER NOT NULL REFERENCES public.posts(id) ON DELETE CASCADE,
+    user_id INTEGER REFERENCES public.users(id) ON DELETE SET NULL,
+    session_id UUID NOT NULL,
+    ip_address VARCHAR(45),
+    user_agent TEXT,
+    referrer TEXT,
+    device_type VARCHAR(20),
+    view_duration INTEGER, -- seconds
+    read_percentage INTEGER, -- 0-100
+    is_from_notification BOOLEAN DEFAULT FALSE,
+    is_from_search BOOLEAN DEFAULT FALSE,
+    is_from_recommendation BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    post_version VARCHAR(20), -- Which version was viewed
+    CONSTRAINT chk_read_percentage CHECK (read_percentage BETWEEN 0 AND 100)
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_impressions_post_id ON public.post_impressions(post_id);
+CREATE INDEX IF NOT EXISTS idx_post_impressions_user_id ON public.post_impressions(user_id);
+CREATE INDEX IF NOT EXISTS idx_post_impressions_created_at ON public.post_impressions(created_at);
+CREATE INDEX IF NOT EXISTS idx_post_impressions_post_version ON public.post_impressions(post_version);
+
+-- Groups with decentralization support
+CREATE TABLE IF NOT EXISTS public.groups (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    slug VARCHAR(100) NOT NULL,
+    description TEXT,
+    creator_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE RESTRICT,
+    visibility VARCHAR(20) DEFAULT 'public' NOT NULL,
+    join_mode VARCHAR(20) DEFAULT 'request' NOT NULL,
+    federation_enabled BOOLEAN DEFAULT TRUE,
+    federation_id TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    settings JSONB,
+    avatar_url TEXT,
+    banner_url TEXT,
+    content_cid TEXT, -- Content ID for decentralized storage
+    signature TEXT, -- Group data signature
+    encryption_method encryption_method DEFAULT NULL, -- For encrypted groups
+    encryption_params JSONB,
+    governance_model VARCHAR(50) DEFAULT 'centralized', -- 'centralized', 'democratic', 'autonomous'
+    governance_rules JSONB, -- Rules for group governance
+    CONSTRAINT chk_groups_visibility_values CHECK (visibility IN ('public', 'private', 'unlisted')),
+    CONSTRAINT chk_groups_join_mode_values CHECK (join_mode IN ('open', 'request', 'invite'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_groups_creator_id ON public.groups(creator_id);
+CREATE INDEX IF NOT EXISTS idx_groups_slug ON public.groups(slug);
+CREATE INDEX IF NOT EXISTS idx_groups_visibility ON public.groups(visibility);
+CREATE INDEX IF NOT EXISTS idx_groups_content_cid ON public.groups(content_cid);
+
+-- Group permissions
+CREATE TABLE IF NOT EXISTS public.group_permissions (
+    id SERIAL PRIMARY KEY,
+    group_id INTEGER NOT NULL REFERENCES public.groups(id) ON DELETE CASCADE,
+    role_name VARCHAR(50) NOT NULL,
+    can_post BOOLEAN DEFAULT TRUE,
+    can_comment BOOLEAN DEFAULT TRUE,
+    can_invite BOOLEAN DEFAULT FALSE,
+    can_remove_members BOOLEAN DEFAULT FALSE,
+    can_manage_settings BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    permission_schema JSONB -- Advanced permission structure
+);
+
+CREATE INDEX IF NOT EXISTS idx_group_permissions_group_id ON public.group_permissions(group_id);
+
+-- Group memberships
+CREATE TABLE IF NOT EXISTS public.user_group_memberships (
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    group_id INTEGER NOT NULL REFERENCES public.groups(id) ON DELETE CASCADE,
+    role VARCHAR(50) DEFAULT 'member' NOT NULL,
+    joined_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    invited_by INTEGER REFERENCES public.users(id) ON DELETE SET NULL,
+    status VARCHAR(20) DEFAULT 'active' NOT NULL,
+    signature TEXT, -- Cryptographic proof of membership
+    membership_credential TEXT, -- Verifiable credential
+    PRIMARY KEY(user_id, group_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_group_memberships_user_id ON public.user_group_memberships(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_group_memberships_role ON public.user_group_memberships(role);
+CREATE INDEX IF NOT EXISTS idx_user_group_memberships_status ON public.user_group_memberships(status);
+
+-- Group events
+CREATE TABLE public.group_events (
+    id SERIAL PRIMARY KEY,
+    group_id INTEGER NOT NULL REFERENCES public.groups(id) ON DELETE CASCADE,
+    creator_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    title VARCHAR(200) NOT NULL,
+    description TEXT,
+    start_time TIMESTAMP WITH TIME ZONE NOT NULL,
+    end_time TIMESTAMP WITH TIME ZONE,
+    location TEXT,
+    location_details JSONB,
+    max_attendees INTEGER,
+    rsvp_required BOOLEAN DEFAULT FALSE,
+    cover_image_url TEXT,
+    external_url TEXT,
+    is_virtual BOOLEAN DEFAULT FALSE,
+    virtual_meeting_url TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    status VARCHAR(20) DEFAULT 'scheduled', -- 'scheduled', 'cancelled', 'completed'
+    content_cid TEXT, -- Content ID for event
+    signature TEXT -- Event signature
+);
+
+CREATE INDEX IF NOT EXISTS idx_group_events_group_id ON public.group_events(group_id);
+CREATE INDEX IF NOT EXISTS idx_group_events_creator_id ON public.group_events(creator_id);
+CREATE INDEX IF NOT EXISTS idx_group_events_start_time ON public.group_events(start_time);
+CREATE INDEX IF NOT EXISTS idx_group_events_status ON public.group_events(status);
+CREATE INDEX IF NOT EXISTS idx_group_events_content_cid ON public.group_events(content_cid);
+
+-- Event RSVPs
+CREATE TABLE public.event_rsvps (
+    id SERIAL PRIMARY KEY,
+    event_id INTEGER NOT NULL REFERENCES public.group_events(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    response VARCHAR(20) NOT NULL, -- 'yes', 'no', 'maybe'
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    signature TEXT, -- RSVP signature
+    CONSTRAINT unq_event_user UNIQUE (event_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_event_rsvps_event_id ON public.event_rsvps(event_id);
+CREATE INDEX IF NOT EXISTS idx_event_rsvps_user_id ON public.event_rsvps(user_id);
+
+-- Themes
+CREATE TABLE IF NOT EXISTS public.themes (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    is_default BOOLEAN DEFAULT FALSE,
+    is_public BOOLEAN DEFAULT TRUE,
+    user_id INTEGER REFERENCES public.users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    preview_image_url TEXT,
+    content_cid TEXT -- For decentralized theme storage
+);
+
+CREATE INDEX IF NOT EXISTS idx_themes_user_id ON public.themes(user_id);
+CREATE INDEX IF NOT EXISTS idx_themes_is_default ON public.themes(is_default);
+CREATE INDEX IF NOT EXISTS idx_themes_content_cid ON public.themes(content_cid);
+
+-- Theme settings
+CREATE TABLE IF NOT EXISTS public.theme_settings (
+    theme_id INTEGER NOT NULL REFERENCES public.themes(id) ON DELETE CASCADE,
+    key VARCHAR(100) NOT NULL,
+    value JSONB NOT NULL,
+    PRIMARY KEY(theme_id, key)
+);
+
+-- Profile theme mappings
+CREATE TABLE IF NOT EXISTS public.profile_themes (
+    profile_id INTEGER NOT NULL REFERENCES public.user_profiles(id) ON DELETE CASCADE,
+    theme_id INTEGER NOT NULL REFERENCES public.themes(id) ON DELETE CASCADE,
+    custom_overrides JSONB,
+    PRIMARY KEY(profile_id, theme_id)
+);
+
+-- =============================================
+-- SOCIAL INTERACTION TABLES (ENHANCED)
+-- =============================================
+
+-- Follows with cryptographic verification
+CREATE TABLE IF NOT EXISTS public.follows (
+    id SERIAL PRIMARY KEY,
+    follower_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    following_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    accepted BOOLEAN DEFAULT FALSE,
+    signature TEXT, -- Cryptographic signature of the follow relationship
+    follow_credential TEXT, -- Verifiable credential
+    follow_cid TEXT, -- Content identifier for follow relationship
+    CONSTRAINT chk_not_self_follow CHECK (follower_id <> following_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_follows_follower_id ON public.follows(follower_id);
+CREATE INDEX IF NOT EXISTS idx_follows_following_id ON public.follows(following_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_follows_unique_relationship ON public.follows(follower_id, following_id);
+CREATE INDEX IF NOT EXISTS idx_follows_follow_cid ON public.follows(follow_cid);
+
+-- Likes with cryptographic verification
+CREATE TABLE IF NOT EXISTS public.likes (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    post_id INTEGER NOT NULL REFERENCES public.posts(id) ON DELETE CASCADE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    signature TEXT, -- Cryptographic signature
+    like_cid TEXT, -- Content identifier for like
+    post_version VARCHAR(20) -- Which version was liked
+);
+
+CREATE INDEX IF NOT EXISTS idx_likes_user_id ON public.likes(user_id);
+CREATE INDEX IF NOT EXISTS idx_likes_post_id ON public.likes(post_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_likes_unique ON public.likes(user_id, post_id);
+CREATE INDEX IF NOT EXISTS idx_likes_like_cid ON public.likes(like_cid);
+CREATE INDEX IF NOT EXISTS idx_likes_post_version ON public.likes(post_version);
+
+-- Reposts with cryptographic verification
+CREATE TABLE IF NOT EXISTS public.reposts (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    post_id INTEGER NOT NULL REFERENCES public.posts(id) ON DELETE CASCADE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    signature TEXT, -- Cryptographic signature
+    repost_cid TEXT, -- Content identifier for repost
+    post_version VARCHAR(20) -- Which version was reposted
+);
+
+CREATE INDEX IF NOT EXISTS idx_reposts_user_id ON public.reposts(user_id);
+CREATE INDEX IF NOT EXISTS idx_reposts_post_id ON public.reposts(post_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reposts_unique ON public.reposts(user_id, post_id);
+CREATE INDEX IF NOT EXISTS idx_reposts_repost_cid ON public.reposts(repost_cid);
+CREATE INDEX IF NOT EXISTS idx_reposts_post_version ON public.reposts(post_version);
+
+-- Bookmarks with version tracking
+CREATE TABLE public.bookmarks (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    post_id INTEGER NOT NULL REFERENCES public.posts(id) ON DELETE CASCADE,
+    collection_name VARCHAR(100) DEFAULT 'Default',
+    notes TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    post_version VARCHAR(20), -- Which version was bookmarked
+    bookmark_cid TEXT, -- Content identifier for bookmark
+    signature TEXT, -- Cryptographic signature
+    encryption_method encryption_method DEFAULT NULL, -- If bookmark is encrypted
+    encryption_params JSONB,
+    CONSTRAINT unq_user_post_bookmark UNIQUE (user_id, post_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_bookmarks_user_id ON public.bookmarks(user_id);
+CREATE INDEX IF NOT EXISTS idx_bookmarks_post_id ON public.bookmarks(post_id);
+CREATE INDEX IF NOT EXISTS idx_bookmarks_collection ON public.bookmarks(user_id, collection_name);
+CREATE INDEX IF NOT EXISTS idx_bookmarks_post_version ON public.bookmarks(post_version);
+CREATE INDEX IF NOT EXISTS idx_bookmarks_bookmark_cid ON public.bookmarks(bookmark_cid);
+
+-- Post sharing
+CREATE TABLE public.post_shares (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    post_id INTEGER NOT NULL REFERENCES public.posts(id) ON DELETE CASCADE,
+    share_platform VARCHAR(50) NOT NULL, -- 'twitter', 'facebook', 'email', etc.
+    share_url TEXT, -- Generated URL for the share
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    post_version VARCHAR(20), -- Which version was shared
+    signature TEXT -- Cryptographic signature
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_shares_user_id ON public.post_shares(user_id);
+CREATE INDEX IF NOT EXISTS idx_post_shares_post_id ON public.post_shares(post_id);
+CREATE INDEX IF NOT EXISTS idx_post_shares_platform ON public.post_shares(share_platform);
+CREATE INDEX IF NOT EXISTS idx_post_shares_post_version ON public.post_shares(post_version);
+
+-- User interests and preferences
+CREATE TABLE public.user_interests (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    topic_id INTEGER NOT NULL REFERENCES public.topics(id) ON DELETE CASCADE,
+    interest_level INTEGER DEFAULT 5, -- 1-10 scale
+    explicit_follow BOOLEAN DEFAULT FALSE, -- User explicitly followed this topic
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unq_user_topic UNIQUE (user_id, topic_id),
+    CONSTRAINT chk_interest_level CHECK (interest_level BETWEEN 1 AND 10)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_interests_user_id ON public.user_interests(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_interests_topic_id ON public.user_interests(topic_id);
+CREATE INDEX IF NOT EXISTS idx_user_interests_explicit ON public.user_interests(explicit_follow);
+
+-- Topic content discovery preferences
+CREATE TABLE public.topic_preferences (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    topic_id INTEGER NOT NULL REFERENCES public.topics(id) ON DELETE CASCADE,
+    include_in_feed BOOLEAN DEFAULT TRUE,
+    notification_level VARCHAR(20) DEFAULT 'none', -- 'none', 'highlights', 'all'
+    feed_priority INTEGER DEFAULT 5, -- 1-10 scale
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unq_user_topic_pref UNIQUE (user_id, topic_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_topic_preferences_user_id ON public.topic_preferences(user_id);
+
+-- =============================================
+-- ENCRYPTED DIRECT MESSAGING
+-- =============================================
+
+-- Enhanced direct messages with encryption
+CREATE TABLE public.direct_messages (
+    id SERIAL PRIMARY KEY,
+    sender_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    recipient_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    content TEXT NOT NULL,
+    media_ids INTEGER[], -- References to media_items
+    read_at TIMESTAMP WITH TIME ZONE,
+    encryption_method encryption_method DEFAULT 'aes256gcm', -- For end-to-end encrypted messages
+    encryption_params JSONB, -- Algorithm-specific parameters
+    public_metadata JSONB, -- Metadata visible to network (timestamps, etc)
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    deleted_by_sender BOOLEAN DEFAULT FALSE,
+    deleted_by_recipient BOOLEAN DEFAULT FALSE,
+    message_cid TEXT, -- Content identifier for the message
+    forward_secrecy BOOLEAN DEFAULT TRUE, -- Whether the message uses forward secrecy
+    signature TEXT, -- Message signature
+    verification_proof TEXT, -- Proof that can verify integrity without seeing content
+    CONSTRAINT chk_not_self_message CHECK (sender_id <> recipient_id),
+    CONSTRAINT chk_dm_content_not_empty CHECK (length(trim(content)) > 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_direct_messages_sender_id ON public.direct_messages(sender_id);
+CREATE INDEX IF NOT EXISTS idx_direct_messages_recipient_id ON public.direct_messages(recipient_id);
+CREATE INDEX IF NOT EXISTS idx_direct_messages_read_at ON public.direct_messages(read_at) WHERE read_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_direct_messages_created_at ON public.direct_messages(created_at);
+CREATE INDEX IF NOT EXISTS idx_direct_messages_message_cid ON public.direct_messages(message_cid);
+
+-- Direct message conversations (for UI grouping)
+CREATE TABLE public.dm_conversations (
+    id SERIAL PRIMARY KEY,
+    user1_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    user2_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    last_message_id INTEGER REFERENCES public.direct_messages(id) ON DELETE SET NULL,
+    last_message_timestamp TIMESTAMP WITH TIME ZONE,
+    unread_count_user1 INTEGER DEFAULT 0,
+    unread_count_user2 INTEGER DEFAULT 0,
+    is_hidden_user1 BOOLEAN DEFAULT FALSE,
+    is_hidden_user2 BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    encryption_method encryption_method DEFAULT NULL, -- For conversation-level encryption
+    encryption_params JSONB,
+    shared_key_id TEXT, -- Reference to shared encryption key
+    conversation_cid TEXT, -- Content identifier for the conversation
+    CONSTRAINT chk_different_users CHECK (user1_id < user2_id), -- Ensures unique conversation pairs
+    CONSTRAINT unq_conversation UNIQUE (user1_id, user2_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_dm_conversations_user1_id ON public.dm_conversations(user1_id);
+CREATE INDEX IF NOT EXISTS idx_dm_conversations_user2_id ON public.dm_conversations(user2_id);
+CREATE INDEX IF NOT EXISTS idx_dm_conversations_last_message ON public.dm_conversations(last_message_timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_dm_conversations_conversation_cid ON public.dm_conversations(conversation_cid);
+
+-- Conversation encryption keys (for key rotation)
+CREATE TABLE public.conversation_encryption_keys (
+    id SERIAL PRIMARY KEY,
+    conversation_id INTEGER NOT NULL REFERENCES public.dm_conversations(id) ON DELETE CASCADE,
+    key_id TEXT NOT NULL, -- Unique identifier for this key
+    encrypted_key_user1 TEXT NOT NULL, -- Key encrypted with user1's public key
+    encrypted_key_user2 TEXT NOT NULL, -- Key encrypted with user2's public key
+    active_from TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    active_until TIMESTAMP WITH TIME ZONE, -- NULL means still active
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    created_by INTEGER REFERENCES public.users(id) ON DELETE SET NULL,
+    key_version INTEGER DEFAULT 1,
+    encryption_method encryption_method NOT NULL,
+    CONSTRAINT unq_conversation_key_id UNIQUE (conversation_id, key_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversation_keys_conversation_id ON public.conversation_encryption_keys(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_conversation_keys_active ON public.conversation_encryption_keys(active_from, active_until);
+
+-- Notifications with enhanced encryption and verification
+CREATE TABLE IF NOT EXISTS public.notifications (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    type VARCHAR(50) NOT NULL,
+    actor_id INTEGER REFERENCES public.users(id) ON DELETE SET NULL,
+    object_id INTEGER,
+    read BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    data JSONB,
+    encryption_method encryption_method DEFAULT NULL, -- For encrypted notifications
+    encryption_params JSONB,
+    notification_cid TEXT, -- Content identifier
+    signature TEXT -- Signature for verification
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_user_id ON public.notifications(user_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON public.notifications(user_id, read);
+CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON public.notifications(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notifications_actor_id ON public.notifications(actor_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_object_id ON public.notifications(object_id);
+CREATE INDEX IF NOT EXISTS idx_notifications_notification_cid ON public.notifications(notification_cid);
+
+-- =============================================
+-- AUTHENTICATION & SECURITY TABLES (ENHANCED)
+-- =============================================
+
+-- User certificates
+CREATE TABLE IF NOT EXISTS public.user_certificates (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    public_key TEXT NOT NULL,
+    private_key TEXT, -- Should be encrypted
+    certificate TEXT,
+    fingerprint VARCHAR(255) NOT NULL,
+    issued_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    status certificate_status DEFAULT 'active' NOT NULL,
+    issuer VARCHAR(255),
+    is_default BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    meta_data JSONB,
+    encryption_method encryption_method DEFAULT 'aes256gcm',
+    encryption_params JSONB,
+    version VARCHAR(20) DEFAULT '1.0.0', -- SEMVER versioning
+    certificate_type VARCHAR(50) DEFAULT 'x509', -- x509, pgp, etc.
+    key_type VARCHAR(20) DEFAULT 'rsa', -- 'rsa', 'ed25519', 'secp256k1', etc.
+    key_size INTEGER -- Bit length of the key
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_certificates_user_id ON public.user_certificates(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_certificates_fingerprint ON public.user_certificates(fingerprint);
+
+-- Certificate versions (for SEMVER versioning)
+CREATE TABLE IF NOT EXISTS public.certificate_versions (
+    id SERIAL PRIMARY KEY,
+    certificate_id INTEGER NOT NULL REFERENCES public.user_certificates(id) ON DELETE CASCADE,
+    version VARCHAR(20) NOT NULL, -- SEMVER format
+    public_key TEXT NOT NULL,
+    private_key TEXT, -- Encrypted
+    certificate TEXT,
+    fingerprint VARCHAR(255) NOT NULL,
+    issued_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    change_type version_change_type NOT NULL,
+    change_description TEXT,
+    created_by INTEGER REFERENCES public.users(id) ON DELETE SET NULL,
+    encryption_method encryption_method DEFAULT 'aes256gcm',
+    encryption_params JSONB,
+    CONSTRAINT unq_certificate_version UNIQUE (certificate_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_certificate_versions_certificate_id ON public.certificate_versions(certificate_id);
+CREATE INDEX IF NOT EXISTS idx_certificate_versions_version ON public.certificate_versions(version);
+
+-- Certificate revocations
+CREATE TABLE IF NOT EXISTS public.certificate_revocations (
+    id SERIAL PRIMARY KEY,
+    certificate_id INTEGER NOT NULL REFERENCES public.user_certificates(id) ON DELETE CASCADE,
+    revoked_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    reason TEXT,
+    revoked_by INTEGER REFERENCES public.users(id) ON DELETE SET NULL,
+    revocation_signature TEXT, -- Signed proof of revocation
+    revocation_cid TEXT -- Content identifier for revocation
+);
+
+CREATE INDEX IF NOT EXISTS idx_certificate_revocations_certificate_id ON public.certificate_revocations(certificate_id);
+CREATE INDEX IF NOT EXISTS idx_certificate_revocations_revocation_cid ON public.certificate_revocations(revocation_cid);
+
+-- OAuth clients
+CREATE TABLE IF NOT EXISTS public.oauth_clients (
+    id UUID DEFAULT uuid_generate_v4() NOT NULL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    client_secret TEXT NOT NULL,
+    redirect_uris JSONB NOT NULL,
+    grant_types JSONB NOT NULL,
+    scope TEXT NOT NULL,
+    user_id INTEGER REFERENCES public.users(id) ON DELETE SET NULL,
+    logo_url TEXT,
+    website_url TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    is_active BOOLEAN DEFAULT TRUE,
+    encryption_method encryption_method DEFAULT 'bcrypt',
+    encryption_params JSONB,
+    certificate_id INTEGER REFERENCES public.user_certificates(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_oauth_clients_user_id ON public.oauth_clients(user_id);
+
+-- OAuth authorization codes
+CREATE TABLE IF NOT EXISTS public.oauth_authorization_codes (
+    code TEXT PRIMARY KEY,
+    client_id UUID NOT NULL REFERENCES public.oauth_clients(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    redirect_uri TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    code_challenge TEXT,
+    code_challenge_method VARCHAR(20),
+    encryption_method encryption_method DEFAULT 'bcrypt'
+);
+
+CREATE INDEX IF NOT EXISTS idx_oauth_authorization_codes_user_id ON public.oauth_authorization_codes(user_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_authorization_codes_client_id ON public.oauth_authorization_codes(client_id);
+
+-- OAuth access tokens with enhanced security
+CREATE TABLE IF NOT EXISTS public.oauth_access_tokens (
+    token TEXT PRIMARY KEY,
+    client_id UUID NOT NULL REFERENCES public.oauth_clients(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    scope TEXT NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    token_hash TEXT, -- For verification without exposing the token
+    token_type VARCHAR(20) DEFAULT 'bearer',
+    encryption_method encryption_method DEFAULT 'bcrypt',
+    encryption_params JSONB
+);
+
+CREATE INDEX IF NOT EXISTS idx_oauth_access_tokens_user_id ON public.oauth_access_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_access_tokens_client_id ON public.oauth_access_tokens(client_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_access_tokens_expires_at ON public.oauth_access_tokens(expires_at);
+
+-- OAuth refresh tokens
+CREATE TABLE IF NOT EXISTS public.oauth_refresh_tokens (
+    token TEXT PRIMARY KEY,
+    client_id UUID NOT NULL REFERENCES public.oauth_clients(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    scope TEXT NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    token_hash TEXT, -- For verification without exposing the token
+    encryption_method encryption_method DEFAULT 'bcrypt',
+    encryption_params JSONB,
+    previous_token TEXT -- For token rotation tracking
+);
+
+CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_user_id ON public.oauth_refresh_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_client_id ON public.oauth_refresh_tokens(client_id);
+
+-- Login history and security logs
+CREATE TABLE public.login_history (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    login_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    ip_address VARCHAR(45) NOT NULL,
+    user_agent TEXT,
+    success BOOLEAN NOT NULL,
+    failure_reason VARCHAR(50),
+    location_data JSONB, -- Geolocation info
+    device_id VARCHAR(255), -- Consistent identifier for recognized devices
+    is_suspicious BOOLEAN DEFAULT FALSE,
+    risk_score INTEGER, -- 0-100 scale for login risk
+    mfa_used BOOLEAN DEFAULT FALSE,
+    authentication_method VARCHAR(50), -- 'password', 'oauth', 'certificate', 'webauthn', etc.
+    login_signature TEXT -- For signed login attestations
+);
+
+CREATE INDEX IF NOT EXISTS idx_login_history_user_id ON public.login_history(user_id);
+CREATE INDEX IF NOT EXISTS idx_login_history_ip_address ON public.login_history(ip_address);
+CREATE INDEX IF NOT EXISTS idx_login_history_login_time ON public.login_history(login_time);
+CREATE INDEX IF NOT EXISTS idx_login_history_suspicious ON public.login_history(is_suspicious);
+
+-- User devices
+CREATE TABLE public.user_devices (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    device_id VARCHAR(255) NOT NULL,
+    device_name VARCHAR(100),
+    device_type VARCHAR(50), -- 'mobile', 'tablet', 'desktop', etc.
+    browser VARCHAR(100),
+    os VARCHAR(100),
+    last_ip VARCHAR(45),
+    last_used TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    is_trusted BOOLEAN DEFAULT TRUE,
+    push_token TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    device_public_key TEXT, -- For device-specific encryption
+    device_certificate TEXT, -- For device verification
+    device_signature TEXT, -- Signature proving device ownership
+    CONSTRAINT unq_user_device UNIQUE (user_id, device_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_devices_user_id ON public.user_devices(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_devices_device_id ON public.user_devices(device_id);
+
+-- Enhanced privacy settings
+CREATE TABLE public.privacy_settings (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    setting_key VARCHAR(100) NOT NULL,
+    setting_value JSONB NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    encryption_method encryption_method DEFAULT NULL, -- For encrypted privacy settings
+    encryption_params JSONB,
+    signature TEXT, -- Settings signature
+    CONSTRAINT unq_user_privacy_setting UNIQUE (user_id, setting_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_privacy_settings_user_id ON public.privacy_settings(user_id);
+
+-- WebAuthn credentials
+CREATE TABLE public.webauthn_credentials (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    credential_id TEXT NOT NULL,
+    public_key TEXT NOT NULL,
+    attestation_type VARCHAR(50),
+    attestation_format VARCHAR(50),
+    authenticator_aaguid TEXT,
+    authenticator_name VARCHAR(255),
+    registered_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    last_used_at TIMESTAMP WITH TIME ZONE,
+    sign_count BIGINT DEFAULT 0,
+    is_primary BOOLEAN DEFAULT FALSE,
+    nickname VARCHAR(100),
+    metadata JSONB,
+    CONSTRAINT unq_credential_id UNIQUE (credential_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_webauthn_credentials_user_id ON public.webauthn_credentials(user_id);
+
+-- =============================================
+-- MODERATION AND REPORTING SYSTEM
+-- =============================================
+
+-- Content reports
+CREATE TABLE public.content_reports (
+    id SERIAL PRIMARY KEY,
+    reporter_id INTEGER REFERENCES public.users(id) ON DELETE SET NULL, -- Allow anonymous reports
+    reported_user_id INTEGER REFERENCES public.users(id) ON DELETE CASCADE,
+    content_type VARCHAR(20) NOT NULL, -- 'post', 'comment', 'profile', etc.
+    content_id INTEGER NOT NULL,
+    reason VARCHAR(100) NOT NULL,
+    details TEXT,
+    evidence_urls JSONB, -- URLs to screenshots or other evidence
+    status report_status DEFAULT 'open',
+    assigned_to INTEGER REFERENCES public.users(id) ON DELETE SET NULL,
+    resolution_note TEXT,
+    action_taken moderation_action DEFAULT 'none',
+    report_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    resolved_date TIMESTAMP WITH TIME ZONE,
+    ip_address VARCHAR(45),
+    automated_score INTEGER, -- Result of automated toxicity analysis
+    is_appeal BOOLEAN DEFAULT FALSE,
+    appeal_reason TEXT,
+    parent_report_id INTEGER REFERENCES public.content_reports(id) ON DELETE SET NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_content_reports_reporter_id ON public.content_reports(reporter_id);
+CREATE INDEX IF NOT EXISTS idx_content_reports_reported_user_id ON public.content_reports(reported_user_id);
+CREATE INDEX IF NOT EXISTS idx_content_reports_content ON public.content_reports(content_type, content_id);
+CREATE INDEX IF NOT EXISTS idx_content_reports_status ON public.content_reports(status);
+CREATE INDEX IF NOT EXISTS idx_content_reports_date ON public.content_reports(report_date);
+
+-- Content moderation actions
+CREATE TABLE public.moderation_actions (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES public.users(id) ON DELETE CASCADE,
+    moderator_id INTEGER REFERENCES public.users(id) ON DELETE SET NULL,
+    action_type moderation_action NOT NULL,
+    content_type VARCHAR(20), -- 'post', 'comment', 'profile', etc.
+    content_id INTEGER, -- Optional, for content-specific actions
+    reason TEXT NOT NULL,
+    details JSONB,
+    report_id INTEGER REFERENCES public.content_reports(id) ON DELETE SET NULL,
+    action_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    expiry_date TIMESTAMP WITH TIME ZONE, -- For temporary restrictions
+    is_active BOOLEAN DEFAULT TRUE,
+    is_automated BOOLEAN DEFAULT FALSE,
+    appeal_status VARCHAR(20), -- 'none', 'pending', 'approved', 'rejected'
+    appeal_date TIMESTAMP WITH TIME ZONE,
+    appeal_notes TEXT,
+    overturned_by INTEGER REFERENCES public.users(id) ON DELETE SET NULL,
+    overturned_date TIMESTAMP WITH TIME ZONE,
+    overturned_reason TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_moderation_actions_user_id ON public.moderation_actions(user_id);
+CREATE INDEX IF NOT EXISTS idx_moderation_actions_moderator_id ON public.moderation_actions(moderator_id);
+CREATE INDEX IF NOT EXISTS idx_moderation_actions_report_id ON public.moderation_actions(report_id);
+CREATE INDEX IF NOT EXISTS idx_moderation_actions_content ON public.moderation_actions(content_type, content_id);
+CREATE INDEX IF NOT EXISTS idx_moderation_actions_active ON public.moderation_actions(is_active);
+
+-- Content classification (automated and manual)
+CREATE TABLE public.content_classifications (
+    id SERIAL PRIMARY KEY,
+    content_type VARCHAR(20) NOT NULL, -- 'post', 'comment', 'profile', etc.
+    content_id INTEGER NOT NULL,
+    category VARCHAR(50) NOT NULL, -- 'adult', 'violence', 'hate_speech', etc.
+    confidence NUMERIC(5,2), -- 0-100 for automated classifications
+    is_automated BOOLEAN DEFAULT TRUE,
+    classifier_version VARCHAR(50), -- For automated classifications
+    moderator_id INTEGER REFERENCES public.users(id) ON DELETE SET NULL, -- For manual classifications
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unq_content_category UNIQUE (content_type, content_id, category)
+);
+
+CREATE INDEX IF NOT EXISTS idx_content_classifications_content ON public.content_classifications(content_type, content_id);
+CREATE INDEX IF NOT EXISTS idx_content_classifications_category ON public.content_classifications(category);
+
+-- Content warning labels
+CREATE TABLE public.content_warnings (
+    id SERIAL PRIMARY KEY,
+    content_type VARCHAR(20) NOT NULL,
+    content_id INTEGER NOT NULL,
+    warning_type VARCHAR(50) NOT NULL, -- 'sensitive', 'adult', 'violence', etc.
+    is_auto_generated BOOLEAN DEFAULT FALSE,
+    added_by INTEGER REFERENCES public.users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unq_content_warning UNIQUE (content_type, content_id, warning_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_content_warnings_content ON public.content_warnings(content_type, content_id);
+
+-- Federation domain trust levels
+CREATE TABLE public.domain_trust_levels (
+    id SERIAL PRIMARY KEY,
+    domain VARCHAR(255) NOT NULL,
+    trust_level INTEGER NOT NULL DEFAULT 0, -- -10 to 10 scale, negative is untrusted
+    is_blocked BOOLEAN DEFAULT FALSE,
+    limit_federation BOOLEAN DEFAULT FALSE,
+    notes TEXT,
+    last_activity TIMESTAMP WITH TIME ZONE,
+    incident_count INTEGER DEFAULT 0,
+    added_by INTEGER REFERENCES public.users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unq_domain UNIQUE (domain),
+    CONSTRAINT chk_trust_range CHECK (trust_level BETWEEN -10 AND 10)
+);
+
+CREATE INDEX IF NOT EXISTS idx_domain_trust_levels_domain ON public.domain_trust_levels(domain);
+CREATE INDEX IF NOT EXISTS idx_domain_trust_levels_blocked ON public.domain_trust_levels(is_blocked);
+
+-- Moderation automation rules
+CREATE TABLE public.moderation_rules (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    trigger_conditions JSONB NOT NULL, -- Conditions that trigger this rule
+    actions JSONB NOT NULL, -- Actions to take when triggered
+    is_active BOOLEAN DEFAULT TRUE,
+    priority INTEGER DEFAULT 0,
+    created_by INTEGER REFERENCES public.users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unq_rule_name UNIQUE (name)
+);
+
+CREATE INDEX IF NOT EXISTS idx_moderation_rules_active ON public.moderation_rules(is_active);
+CREATE INDEX IF NOT EXISTS idx_moderation_rules_priority ON public.moderation_rules(priority);
+
+-- =============================================
+-- MONETIZATION TABLES
+-- =============================================
+
+-- Content pricing tiers
+CREATE TABLE public.content_tiers (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    price NUMERIC(10,2) NOT NULL,
+    currency VARCHAR(3) DEFAULT 'USD',
+    benefits JSONB,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_positive_price CHECK (price >= 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_content_tiers_user_id ON public.content_tiers(user_id);
+
+-- Connect posts to monetization tiers
+CREATE TABLE public.post_monetization (
+    id SERIAL PRIMARY KEY,
+    post_id INTEGER NOT NULL REFERENCES public.posts(id) ON DELETE CASCADE,
+    tier_id INTEGER REFERENCES public.content_tiers(id) ON DELETE SET NULL,
+    price NUMERIC(10,2), -- Individual price (if not using tier)
+    currency VARCHAR(3) DEFAULT 'USD',
+    is_premium BOOLEAN DEFAULT TRUE,
+    preview_percentage INTEGER DEFAULT 10, -- How much of the content is free to preview (0-100)
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_preview_range CHECK (preview_percentage BETWEEN 0 AND 100),
+    CONSTRAINT chk_price_or_tier CHECK (
+        (tier_id IS NULL AND price IS NOT NULL) OR
+        (tier_id IS NOT NULL AND price IS NULL) OR
+        (tier_id IS NOT NULL AND price IS NOT NULL) -- Can have both for price override
+    )
+);
+
+CREATE INDEX IF NOT EXISTS idx_post_monetization_post_id ON public.post_monetization(post_id);
+CREATE INDEX IF NOT EXISTS idx_post_monetization_tier_id ON public.post_monetization(tier_id);
+
+-- User subscriptions to creators
+CREATE TABLE public.creator_subscriptions (
+    id SERIAL PRIMARY KEY,
+    subscriber_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    creator_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    tier_id INTEGER REFERENCES public.content_tiers(id) ON DELETE SET NULL,
+    status subscription_status DEFAULT 'active',
+    price_at_time NUMERIC(10,2) NOT NULL, -- Historical price when subscribed
+    currency VARCHAR(3) DEFAULT 'USD',
+    schedule payment_schedule DEFAULT 'monthly',
+    started_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    next_billing_date TIMESTAMP WITH TIME ZONE NOT NULL,
+    cancelled_at TIMESTAMP WITH TIME ZONE,
+    payment_method_id VARCHAR(255), -- External payment method reference
+    auto_renew BOOLEAN DEFAULT TRUE,
+    metadata JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_not_self_subscribe CHECK (subscriber_id <> creator_id),
+    CONSTRAINT unq_active_subscription UNIQUE (subscriber_id, creator_id, status) 
+        WHERE status = 'active'
+);
+
+CREATE INDEX IF NOT EXISTS idx_creator_subs_subscriber ON public.creator_subscriptions(subscriber_id);
+CREATE INDEX IF NOT EXISTS idx_creator_subs_creator ON public.creator_subscriptions(creator_id);
+CREATE INDEX IF NOT EXISTS idx_creator_subs_next_billing ON public.creator_subscriptions(next_billing_date);
+CREATE INDEX IF NOT EXISTS idx_creator_subs_status ON public.creator_subscriptions(status);
+
+-- Individual content purchases (for non-subscription content)
+CREATE TABLE public.content_purchases (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    post_id INTEGER NOT NULL REFERENCES public.posts(id) ON DELETE CASCADE,
+    amount NUMERIC(10,2) NOT NULL,
+    currency VARCHAR(3) DEFAULT 'USD',
+    payment_method_id VARCHAR(255),
+    transaction_id VARCHAR(255) UNIQUE,
+    purchase_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    ip_address VARCHAR(45),
+    status VARCHAR(20) DEFAULT 'completed',
+    metadata JSONB,
+    CONSTRAINT unq_user_post UNIQUE (user_id, post_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_content_purchases_user_id ON public.content_purchases(user_id);
+CREATE INDEX IF NOT EXISTS idx_content_purchases_post_id ON public.content_purchases(post_id);
+
+-- Track creator earnings and payouts
+CREATE TABLE public.creator_earnings (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    amount NUMERIC(10,2) NOT NULL,
+    currency VARCHAR(3) DEFAULT 'USD',
+    source_type VARCHAR(50) NOT NULL, -- 'subscription', 'purchase', 'tip', etc.
+    source_id INTEGER NOT NULL, -- ID from the source table
+    platform_fee NUMERIC(10,2) NOT NULL, -- Platform's cut
+    net_amount NUMERIC(10,2) NOT NULL, -- After platform fee
+    is_paid BOOLEAN DEFAULT FALSE,
+    payout_id INTEGER,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_positive_amount CHECK (amount > 0),
+    CONSTRAINT chk_positive_net CHECK (net_amount > 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_creator_earnings_user_id ON public.creator_earnings(user_id);
+CREATE INDEX IF NOT EXISTS idx_creator_earnings_paid ON public.creator_earnings(is_paid);
+CREATE INDEX IF NOT EXISTS idx_creator_earnings_created ON public.creator_earnings(created_at);
+
+-- Creator payout records
+CREATE TABLE public.creator_payouts (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    amount NUMERIC(10,2) NOT NULL,
+    currency VARCHAR(3) DEFAULT 'USD',
+    payment_method VARCHAR(50) NOT NULL, -- 'bank_transfer', 'paypal', etc.
+    payment_details JSONB, -- Account information (encrypted or tokenized)
+    status payout_status DEFAULT 'pending',
+    reference_code VARCHAR(100),
+    requested_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    processed_at TIMESTAMP WITH TIME ZONE,
+    metadata JSONB,
+    CONSTRAINT chk_positive_payout CHECK (amount > 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_creator_payouts_user_id ON public.creator_payouts(user_id);
+CREATE INDEX IF NOT EXISTS idx_creator_payouts_status ON public.creator_payouts(status);
+CREATE INDEX IF NOT EXISTS idx_creator_payouts_requested ON public.creator_payouts(requested_at);
+
+-- Tips and donations
+CREATE TABLE public.user_tips (
+    id SERIAL PRIMARY KEY,
+    from_user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    to_user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    post_id INTEGER REFERENCES public.posts(id) ON DELETE SET NULL,
+    amount NUMERIC(10,2) NOT NULL,
+    currency VARCHAR(3) DEFAULT 'USD',
+    message TEXT,
+    is_anonymous BOOLEAN DEFAULT FALSE,
+    transaction_id VARCHAR(255) UNIQUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_not_self_tip CHECK (from_user_id <> to_user_id),
+    CONSTRAINT chk_positive_tip CHECK (amount > 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_tips_from_user ON public.user_tips(from_user_id);
+CREATE INDEX IF NOT EXISTS idx_user_tips_to_user ON public.user_tips(to_user_id);
+CREATE INDEX IF NOT EXISTS idx_user_tips_post_id ON public.user_tips(post_id);
+
+-- Payment methods
+CREATE TABLE public.user_payment_methods (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    payment_type VARCHAR(50) NOT NULL, -- 'credit_card', 'paypal', etc.
+    is_default BOOLEAN DEFAULT FALSE,
+    provider_token TEXT NOT NULL, -- Tokenized payment method from payment provider
+    last_four VARCHAR(4),
+    expiry_date VARCHAR(7), -- 'MM/YYYY'
+    cardholder_name VARCHAR(255),
+    billing_address JSONB,
+    is_verified BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    metadata JSONB
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_payment_methods_user_id ON public.user_payment_methods(user_id);
+
+-- Subscription plans
+CREATE TABLE IF NOT EXISTS public.subscription_plans (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    price NUMERIC(10,2) NOT NULL,
+    currency VARCHAR(3) DEFAULT 'USD' NOT NULL,
+    billing_interval VARCHAR(20) DEFAULT 'monthly' NOT NULL,
+    features JSONB,
+    is_active BOOLEAN DEFAULT TRUE,
+    max_profiles INTEGER DEFAULT 1,
+    max_storage_gb INTEGER DEFAULT 5,
+    max_certificates INTEGER DEFAULT 1,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Subscription features
+CREATE TABLE IF NOT EXISTS public.subscription_features (
+    id SERIAL PRIMARY KEY,
+    plan_id INTEGER NOT NULL REFERENCES public.subscription_plans(id) ON DELETE CASCADE,
+    feature_name VARCHAR(100) NOT NULL,
+    feature_value JSONB NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_subscription_features_plan_id ON public.subscription_features(plan_id);
+
+-- User subscriptions
+CREATE TABLE IF NOT EXISTS public.user_subscriptions (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    plan_id INTEGER NOT NULL REFERENCES public.subscription_plans(id) ON DELETE RESTRICT,
+    status subscription_status DEFAULT 'active' NOT NULL,
+    started_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE,
+    cancelled_at TIMESTAMP WITH TIME ZONE,
+    renewal_date TIMESTAMP WITH TIME ZONE,
+    payment_method JSONB,
+    payment_id VARCHAR(255),
+    meta_data JSONB
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_subscriptions_user_id ON public.user_subscriptions(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_subscriptions_plan_id ON public.user_subscriptions(plan_id);
+CREATE INDEX IF NOT EXISTS idx_user_subscriptions_status ON public.user_subscriptions(status);
+
+-- =============================================
+-- STORAGE AND INFRASTRUCTURE TABLES
+-- =============================================
+
+-- User storage credentials
+CREATE TABLE IF NOT EXISTS public.user_storage_credentials (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    name VARCHAR(100) NOT NULL,
+    provider storage_provider NOT NULL,
+    credentials JSONB NOT NULL,
+    bucket_name VARCHAR(255) NOT NULL,
+    region VARCHAR(100),
+    endpoint VARCHAR(255),
+    is_default BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    last_verified_at TIMESTAMP WITH TIME ZONE,
+    status VARCHAR(20) DEFAULT 'active',
+    meta_data JSONB
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_storage_credentials_user_id ON public.user_storage_credentials(user_id);
+
+-- Storage headers
+CREATE TABLE IF NOT EXISTS public.storage_headers (
+    id SERIAL PRIMARY KEY,
+    storage_id INTEGER NOT NULL REFERENCES public.user_storage_credentials(id) ON DELETE CASCADE,
+    header_name VARCHAR(255) NOT NULL,
+    header_value TEXT NOT NULL,
+    path_pattern VARCHAR(255)
+);
+
+CREATE INDEX IF NOT EXISTS idx_storage_headers_storage_id ON public.storage_headers(storage_id);
+
+-- Rate limits
+CREATE TABLE IF NOT EXISTS public.rate_limits (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES public.users(id) ON DELETE CASCADE,
+    ip_address TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    request_count INTEGER DEFAULT 1,
+    reset_at TIMESTAMP WITH TIME ZONE NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_rate_limits_ip_endpoint ON public.rate_limits(ip_address, endpoint);
+CREATE INDEX IF NOT EXISTS idx_rate_limits_user_endpoint ON public.rate_limits(user_id, endpoint);
+CREATE INDEX IF NOT EXISTS idx_rate_limits_reset_at ON public.rate_limits(reset_at);
+
+-- =============================================
+-- DIGITAL ASSETS AND TOKEN-GATING (ENHANCED)
+-- =============================================
+
+-- User wallets
+CREATE TABLE public.user_wallets (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    wallet_address TEXT NOT NULL,
+    wallet_type VARCHAR(50) NOT NULL, -- 'ethereum', 'solana', etc.
+    display_name VARCHAR(100),
+    is_verified BOOLEAN DEFAULT FALSE,
+    verification_date TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    signature TEXT, -- Cryptographic signature proving ownership
+    verification_method VARCHAR(50), -- How the wallet was verified
+    CONSTRAINT unq_user_wallet_address UNIQUE (user_id, wallet_address, wallet_type)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_wallets_user_id ON public.user_wallets(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_wallets_address ON public.user_wallets(wallet_address);
+
+-- Digital assets
+CREATE TABLE public.digital_assets (
+    id SERIAL PRIMARY KEY,
+    owner_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    asset_type VARCHAR(50) NOT NULL, -- 'nft', 'token', etc.
+    contract_address TEXT,
+    token_id TEXT,
+    blockchain VARCHAR(50) NOT NULL,
+    metadata JSONB NOT NULL,
+    name VARCHAR(255),
+    description TEXT,
+    image_url TEXT,
+    external_url TEXT,
+    verified BOOLEAN DEFAULT FALSE,
+    last_verified TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    content_cid TEXT, -- Content identifier for asset
+    asset_signature TEXT, -- Creator signature
+    version VARCHAR(20) DEFAULT '1.0.0' -- SEMVER version
+);
+
+CREATE INDEX IF NOT EXISTS idx_digital_assets_owner_id ON public.digital_assets(owner_id);
+CREATE INDEX IF NOT EXISTS idx_digital_assets_contract ON public.digital_assets(contract_address, token_id);
+CREATE INDEX IF NOT EXISTS idx_digital_assets_content_cid ON public.digital_assets(content_cid);
+CREATE INDEX IF NOT EXISTS idx_digital_assets_version ON public.digital_assets(version);
+
+-- Digital asset versions
+CREATE TABLE public.digital_asset_versions (
+    id SERIAL PRIMARY KEY,
+    asset_id INTEGER NOT NULL REFERENCES public.digital_assets(id) ON DELETE CASCADE,
+    version VARCHAR(20) NOT NULL, -- SEMVER format
+    metadata JSONB NOT NULL,
+    image_url TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    change_type version_change_type NOT NULL,
+    change_description TEXT,
+    created_by INTEGER REFERENCES public.users(id) ON DELETE SET NULL,
+    content_cid TEXT, -- Content identifier for this version
+    asset_signature TEXT, -- Signature for this version
+    CONSTRAINT unq_asset_version UNIQUE (asset_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_digital_asset_versions_asset_id ON public.digital_asset_versions(asset_id);
+CREATE INDEX IF NOT EXISTS idx_digital_asset_versions_version ON public.digital_asset_versions(version);
+CREATE INDEX IF NOT EXISTS idx_digital_asset_versions_content_cid ON public.digital_asset_versions(content_cid);
+
+-- Enhanced token-gated content
+CREATE TABLE public.token_gated_content (
+    id SERIAL PRIMARY KEY,
+    post_id INTEGER NOT NULL REFERENCES public.posts(id) ON DELETE CASCADE,
+    asset_type VARCHAR(50) NOT NULL, -- 'nft', 'token', etc.
+    asset_contract TEXT,
+    asset_id TEXT, -- Optional, for specific token IDs
+    min_balance NUMERIC(20,0), -- Minimum token balance required
+    blockchain VARCHAR(50) NOT NULL,
+    condition_type VARCHAR(50) NOT NULL, -- 'ownership', 'min_balance', 'whitelist', etc.
+    condition_data JSONB, -- Additional condition parameters
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    version VARCHAR(20) DEFAULT '1.0.0', -- SEMVER version for the access policy
+    verification_method VARCHAR(50) DEFAULT 'onchain', -- 'onchain', 'offchain_proof', 'merkle', etc.
+    verification_params JSONB, -- Parameters for the verification method
+    content_cid TEXT, -- Content identifier for this access policy
+    policy_signature TEXT -- Signature of the policy
+);
+
+CREATE INDEX IF NOT EXISTS idx_token_gated_content_post_id ON public.token_gated_content(post_id);
+CREATE INDEX IF NOT EXISTS idx_token_gated_content_asset ON public.token_gated_content(asset_contract, asset_id);
+CREATE INDEX IF NOT EXISTS idx_token_gated_content_version ON public.token_gated_content(version);
+CREATE INDEX IF NOT EXISTS idx_token_gated_content_content_cid ON public.token_gated_content(content_cid);
+
+-- Token gating policy versions
+CREATE TABLE public.token_gating_versions (
+    id SERIAL PRIMARY KEY,
+    gating_id INTEGER NOT NULL REFERENCES public.token_gated_content(id) ON DELETE CASCADE,
+    version VARCHAR(20) NOT NULL, -- SEMVER format
+    condition_data JSONB NOT NULL,
+    verification_method VARCHAR(50) NOT NULL,
+    verification_params JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    change_type version_change_type NOT NULL,
+    change_description TEXT,
+    created_by INTEGER REFERENCES public.users(id) ON DELETE SET NULL,
+    content_cid TEXT, -- Content identifier for this version
+    policy_signature TEXT, -- Signature for this version
+    CONSTRAINT unq_gating_version UNIQUE (gating_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_token_gating_versions_gating_id ON public.token_gating_versions(gating_id);
+CREATE INDEX IF NOT EXISTS idx_token_gating_versions_version ON public.token_gating_versions(version);
+CREATE INDEX IF NOT EXISTS idx_token_gating_versions_content_cid ON public.token_gating_versions(content_cid);
+
+-- Access token logs for token-gated content
+CREATE TABLE public.token_access_logs (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    content_id INTEGER NOT NULL REFERENCES public.token_gated_content(id) ON DELETE CASCADE,
+    wallet_id INTEGER REFERENCES public.user_wallets(id) ON DELETE SET NULL,
+    verification_method VARCHAR(50) NOT NULL, -- 'wallet', 'token', 'whitelist', etc.
+    successful BOOLEAN NOT NULL,
+    verification_data JSONB,
+    access_time TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    ip_address VARCHAR(45),
+    content_version VARCHAR(20), -- Version of content accessed
+    policy_version VARCHAR(20), -- Version of policy used
+    access_proof TEXT, -- Cryptographic proof of access
+    proof_type VARCHAR(50) -- Type of proof
+);
+
+CREATE INDEX IF NOT EXISTS idx_token_access_logs_user_id ON public.token_access_logs(user_id);
+CREATE INDEX IF NOT EXISTS idx_token_access_logs_content_id ON public.token_access_logs(content_id);
+CREATE INDEX IF NOT EXISTS idx_token_access_logs_content_version ON public.token_access_logs(content_version);
+CREATE INDEX IF NOT EXISTS idx_token_access_logs_policy_version ON public.token_access_logs(policy_version);
+
+-- =============================================
+-- MULTI-LANGUAGE SUPPORT
+-- =============================================
+
+-- User language preferences
+CREATE TABLE public.user_languages (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    language_code VARCHAR(10) NOT NULL, -- ISO 639-1 codes
+    proficiency VARCHAR(20), -- 'native', 'fluent', 'intermediate', 'basic'
+    is_primary BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unq_user_language UNIQUE (user_id, language_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_languages_user_id ON public.user_languages(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_languages_primary ON public.user_languages(user_id, is_primary);
+
+-- Content translations
+CREATE TABLE public.content_translations (
+    id SERIAL PRIMARY KEY,
+    source_type VARCHAR(20) NOT NULL, -- 'post', 'profile', 'group', etc.
+    source_id INTEGER NOT NULL,
+    language_code VARCHAR(10) NOT NULL,
+    translated_content TEXT NOT NULL,
+    translator_type VARCHAR(20) NOT NULL, -- 'machine', 'human', 'community'
+    translator_id INTEGER REFERENCES public.users(id) ON DELETE SET NULL, -- For human translations
+    quality_score NUMERIC(3,2), -- 0-5 scale
+    is_approved BOOLEAN DEFAULT FALSE,
+    approved_by INTEGER REFERENCES public.users(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unq_content_translation UNIQUE (source_type, source_id, language_code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_content_translations_source ON public.content_translations(source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_content_translations_language ON public.content_translations(language_code);
+CREATE INDEX IF NOT EXISTS idx_content_translations_translator ON public.content_translations(translator_id);
+
+-- Translation feedback
+CREATE TABLE public.translation_feedback (
+    id SERIAL PRIMARY KEY,
+    translation_id INTEGER NOT NULL REFERENCES public.content_translations(id) ON DELETE CASCADE,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    rating INTEGER NOT NULL, -- 1-5 scale
+    feedback_text TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT chk_rating_range CHECK (rating BETWEEN 1 AND 5),
+    CONSTRAINT unq_translation_feedback UNIQUE (translation_id, user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_translation_feedback_translation_id ON public.translation_feedback(translation_id);
+
+-- =============================================
+-- DECENTRALIZED FEDERATION ENHANCEMENTS
+-- =============================================
+
+-- ActivityPub object mappings
+CREATE TABLE public.activitypub_objects (
+    id SERIAL PRIMARY KEY,
+    local_id INTEGER NOT NULL,
+    object_type VARCHAR(50) NOT NULL, -- 'post', 'profile', 'note', etc.
+    ap_id TEXT NOT NULL, -- ActivityPub ID 
+    ap_type VARCHAR(50) NOT NULL, -- ActivityPub type
+    ap_data JSONB NOT NULL, -- Full ActivityPub object
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    signature TEXT, -- AP signature
+    CONSTRAINT unq_ap_object UNIQUE (object_type, local_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_activitypub_objects_local ON public.activitypub_objects(object_type, local_id);
+CREATE INDEX IF NOT EXISTS idx_activitypub_objects_ap_id ON public.activitypub_objects(ap_id);
+
+-- Enhanced Federation queue
+CREATE TABLE IF NOT EXISTS public.federation_queue (
+    id SERIAL PRIMARY KEY,
+    actor TEXT NOT NULL,
+    object_id JSONB NOT NULL,
+    action VARCHAR(50) NOT NULL,
+    target TEXT NOT NULL,
+    attempts INTEGER DEFAULT 0,
+    last_attempt TIMESTAMP WITH TIME ZONE,
+    status VARCHAR(20) DEFAULT 'pending',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    priority INTEGER DEFAULT 5,
+    protocol VARCHAR(20) DEFAULT 'activitypub', -- 'activitypub', 'diaspora', etc.
+    payload JSONB,
+    error_message TEXT,
+    signature TEXT, -- Message signature
+    retry_after TIMESTAMP WITH TIME ZONE -- When to retry after failure
+);
+
+CREATE INDEX IF NOT EXISTS idx_federation_queue_status ON public.federation_queue(status, priority, created_at);
+CREATE INDEX IF NOT EXISTS idx_federation_queue_actor ON public.federation_queue(actor);
+
+-- Federation instances
+CREATE TABLE public.federation_instances (
+    id SERIAL PRIMARY KEY,
+    domain VARCHAR(255) NOT NULL,
+    software VARCHAR(100),
+    version VARCHAR(50),
+    first_seen TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    last_seen TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    status VARCHAR(20) DEFAULT 'active', -- 'active', 'blocked', 'limited', etc.
+    last_successful_interaction TIMESTAMP WITH TIME ZONE,
+    protocols JSONB, -- Supported protocols
+    features JSONB, -- Supported features
+    metadata JSONB,
+    trust_level INTEGER DEFAULT 0, -- -10 to 10
+    admin_notes TEXT,
+    node_id TEXT, -- Unique node identifier
+    CONSTRAINT unq_federation_domain UNIQUE (domain)
+);
+
+CREATE INDEX IF NOT EXISTS idx_federation_instances_domain ON public.federation_instances(domain);
+CREATE INDEX IF NOT EXISTS idx_federation_instances_status ON public.federation_instances(status);
+
+-- Content replication tracking
+CREATE TABLE public.content_replications (
+    id SERIAL PRIMARY KEY,
+    content_type VARCHAR(50) NOT NULL, -- 'post', 'media', etc.
+    content_id INTEGER NOT NULL,
+    content_cid TEXT NOT NULL, -- Content identifier
+    node_id TEXT NOT NULL, -- Node hosting a copy
+    replication_date TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    verification_date TIMESTAMP WITH TIME ZONE, -- Last verified still available
+    status VARCHAR(20) DEFAULT 'active',
+    signature TEXT, -- Node signature verifying storage
+    CONSTRAINT unq_content_replication UNIQUE (content_cid, node_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_content_replications_content ON public.content_replications(content_type, content_id);
+CREATE INDEX IF NOT EXISTS idx_content_replications_cid ON public.content_replications(content_cid);
+CREATE INDEX IF NOT EXISTS idx_content_replications_node ON public.content_replications(node_id);
+
+-- Decentralized identity claims
+CREATE TABLE public.identity_claims (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    claim_type VARCHAR(50) NOT NULL, -- 'did', 'web', 'dns', 'social', etc.
+    claim_value TEXT NOT NULL,
+    verification_method VARCHAR(50) NOT NULL,
+    verification_data JSONB,
+    is_verified BOOLEAN DEFAULT FALSE,
+    verified_at TIMESTAMP WITH TIME ZONE,
+    signature TEXT, -- Proof signature
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT unq_user_claim UNIQUE (user_id, claim_type, claim_value)
+);
+
+CREATE INDEX IF NOT EXISTS idx_identity_claims_user_id ON public.identity_claims(user_id);
+CREATE INDEX IF NOT EXISTS idx_identity_claims_claim ON public.identity_claims(claim_type, claim_value);
+
+-- =============================================
+-- FUNCTIONS AND TRIGGERS (ENHANCED)
+-- =============================================
+
+-- Updated password hashing check
+CREATE OR REPLACE FUNCTION check_password_hash()
+RETURNS TRIGGER AS $$
+BEGIN
+  -- Check if the password is properly hashed with the specified method
+  CASE NEW.encryption_method
+    WHEN 'bcrypt' THEN
+      IF NEW.password !~ '^\$2[aby]\$\d+\$' THEN
+        RAISE EXCEPTION 'Password must be hashed with bcrypt';
+      END IF;
+    WHEN 'argon2id' THEN
+      IF NEW.password !~ '^\$argon2id\$' THEN
+        RAISE EXCEPTION 'Password must be hashed with argon2id';
+      END IF;
+    WHEN 'scrypt' THEN
+      IF NEW.password !~ '^\$scrypt\$' THEN
+        RAISE EXCEPTION 'Password must be hashed with scrypt';
+      END IF;
+    WHEN 'pbkdf2' THEN
+      IF NEW.password !~ '^\$pbkdf2-sha512\$' THEN
+        RAISE EXCEPTION 'Password must be hashed with pbkdf2';
+      END IF;
+    ELSE
+      RAISE EXCEPTION 'Unsupported password encryption method: %', NEW.encryption_method;
+  END CASE;
+  
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER ensure_password_hashed
+BEFORE INSERT OR UPDATE ON public.users
+FOR EACH ROW
+EXECUTE FUNCTION check_password_hash();
+
+-- Post versioning trigger
+CREATE OR REPLACE FUNCTION create_post_version()
+RETURNS TRIGGER AS $$
+DECLARE
+  version_type version_change_type;
+  new_version VARCHAR(20);
+  major INT;
+  minor INT;
+  patch INT;
+BEGIN
+  -- Determine change type from metadata if available
+  IF NEW.metadata IS NOT NULL AND NEW.metadata ? 'version_change_type' THEN
+    version_type := NEW.metadata->>'version_change_type';
+  ELSE
+    version_type := 'minor'; -- Default to minor change
+  END IF;
+
+  -- Parse current version
+  SELECT 
+    COALESCE(split_part(OLD.current_version, '.', 1)::INT, 1) as maj,
+    COALESCE(split_part(OLD.current_version, '.', 2)::INT, 0) as min,
+    COALESCE(split_part(OLD.current_version, '.', 3)::INT, 0) as pat
+  INTO major, minor, patch;
+
+  -- Create new version number based on change type
+  CASE version_type
+    WHEN 'major' THEN
+      new_version := (major + 1) || '.0.0';
+    WHEN 'minor' THEN
+      new_version := major || '.' || (minor + 1) || '.0';
+    WHEN 'patch' THEN
+      new_version := major || '.' || minor || '.' || (patch + 1);
+    WHEN 'security' THEN
+      new_version := major || '.' || minor || '.' || (patch + 1);
+  END CASE;
+
+  -- Insert into post_versions table
+  INSERT INTO public.post_versions (
+    post_id,
+    version,
+    content,
+    attachment_urls,
+    metadata,
+    change_type,
+    change_description,
+    created_by,
+    content_cid,
+    content_hash,
+    hash_algorithm,
+    signature,
+    previous_version,
+    encryption_method,
+    encryption_params
+  ) VALUES (
+    NEW.id,
+    new_version,
+    NEW.content,
+    NEW.attachment_urls,
+    NEW.metadata,
+    version_type,
+    NEW.metadata->>'change_description',
+    NEW.user_id,
+    NEW.content_cid,
+    NEW.content_hash,
+    NEW.hash_algorithm,
+    NEW.signature,
+    OLD.current_version,
+    NEW.encryption_method,
+    NEW.encryption_params
+  ) RETURNING id INTO NEW.current_version_id;
+
+  -- Update post with new version info
+  NEW.current_version := new_version;
+  
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER post_version_update
+BEFORE UPDATE OF content, attachment_urls, metadata ON public.posts
+FOR EACH ROW
+WHEN (OLD.* IS DISTINCT FROM NEW.*)
+EXECUTE FUNCTION create_post_version();
+
+-- Initial version creation for new posts
+CREATE OR REPLACE FUNCTION create_initial_post_version()
+RETURNS TRIGGER AS $$
+BEGIN
+  -- Insert initial version
+  INSERT INTO public.post_versions (
+    post_id,
+    version,
+    content,
+    attachment_urls,
+    metadata,
+    change_type,
+    change_description,
+    created_by,
+    content_cid,
+    content_hash,
+    hash_algorithm,
+    signature,
+    encryption_method,
+    encryption_params
+  ) VALUES (
+    NEW.id,
+    '1.0.0',
+    NEW.content,
+    NEW.attachment_urls,
+    NEW.metadata,
+    'major',
+    'Initial version',
+    NEW.user_id,
+    NEW.content_cid,
+    NEW.content_hash,
+    NEW.hash_algorithm,
+    NEW.signature,
+    NEW.encryption_method,
+    NEW.encryption_params
+  ) RETURNING id INTO NEW.current_version_id;
+
+  -- Update the post with the version id
+  UPDATE public.posts 
+  SET current_version_id = NEW.current_version_id
+  WHERE id = NEW.id;
+  
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER post_initial_version
+AFTER INSERT ON public.posts
+FOR EACH ROW
+EXECUTE FUNCTION create_initial_post_version();
+
+-- Token versioning trigger
+CREATE OR REPLACE FUNCTION create_token_version()
+RETURNS TRIGGER AS $$
+DECLARE
+  version_type version_change_type;
+  new_version VARCHAR(20);
+  major INT;
+  minor INT;
+  patch INT;
+BEGIN
+  -- Determine change type
+  IF NEW.token_metadata IS NOT NULL AND NEW.token_metadata ? 'version_change_type' THEN
+    version_type := NEW.token_metadata->>'version_change_type';
+  ELSE
+    version_type := 'minor'; -- Default to minor change
+  END IF;
+
+  -- Parse current version
+  SELECT 
+    COALESCE(split_part(OLD.version, '.', 1)::INT, 1) as maj,
+    COALESCE(split_part(OLD.version, '.', 2)::INT, 0) as min,
+    COALESCE(split_part(OLD.version, '.', 3)::INT, 0) as pat
+  INTO major, minor, patch;
+
+  -- Create new version number based on change type
+  CASE version_type
+    WHEN 'major' THEN
+      new_version := (major + 1) || '.0.0';
+    WHEN 'minor' THEN
+      new_version := major || '.' || (minor + 1) || '.0';
+    WHEN 'patch' THEN
+      new_version := major || '.' || minor || '.' || (patch + 1);
+    WHEN 'security' THEN
+      new_version := major || '.' || minor || '.' || (patch + 1);
+  END CASE;
+
+  -- Insert into token_versions table
+  INSERT INTO public.token_versions (
+    token_id,
+    version,
+    change_type,
+    change_description,
+    created_by,
+    permissions,
+    token_hash,
+    is_deprecated,
+    successor_version
+  ) VALUES (
+    NEW.id,
+    new_version,
+    version_type,
+    NEW.token_metadata->>'change_description',
+    NEW.user_id,
+    NEW.permissions_schema,
+    NEW.token_hash,
+    FALSE,
+    OLD.version
+  ) RETURNING id INTO NEW.current_version_id;
+
+  -- Update token with new version info
+  NEW.version := new_version;
+  
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER token_version_update
+BEFORE UPDATE OF scope, permissions_schema, token_hash ON public.api_tokens
+FOR EACH ROW
+WHEN (OLD.* IS DISTINCT FROM NEW.*)
+EXECUTE FUNCTION create_token_version();
+
+-- Initial version creation for new tokens
+CREATE OR REPLACE FUNCTION create_initial_token_version()
+RETURNS TRIGGER AS $$
+BEGIN
+  -- Insert initial version
+  INSERT INTO public.token_versions (
+    token_id,
+    version,
+    change_type,
+    change_description,
+    created_by,
+    permissions,
+    token_hash,
+    is_deprecated
+  ) VALUES (
+    NEW.id,
+    '1.0.0',
+    'major',
+    'Initial token creation',
+    NEW.user_id,
+    NEW.permissions_schema,
+    NEW.token_hash,
+    FALSE
+  ) RETURNING id INTO NEW.current_version_id;
+
+  -- Update the token with the version id
+  UPDATE public.api_tokens 
+  SET current_version_id = NEW.current_version_id
+  WHERE id = NEW.id;
+  
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER token_initial_version
+AFTER INSERT ON public.api_tokens
+FOR EACH ROW
+EXECUTE FUNCTION create_initial_token_version();
+
+-- Update user last activity
+CREATE OR REPLACE FUNCTION update_user_last_activity()
+RETURNS TRIGGER AS $$
+BEGIN
+  UPDATE public.users 
+  SET updated_at = CURRENT_TIMESTAMP
+  WHERE id = NEW.user_id;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER track_user_post_activity
+AFTER INSERT ON public.posts
+FOR EACH ROW
+EXECUTE FUNCTION update_user_last_activity();
+
+CREATE TRIGGER track_user_like_activity
+AFTER INSERT ON public.likes
+FOR EACH ROW
+EXECUTE FUNCTION update_user_last_activity();
+
+-- Update analytics counters on post actions
+CREATE OR REPLACE FUNCTION update_post_analytics()
+RETURNS TRIGGER AS $$
+BEGIN
+  -- Create analytics record if it doesn't exist
+  INSERT INTO public.post_analytics (post_id, updated_at)
+  VALUES (NEW.post_id, CURRENT_TIMESTAMP)
+  ON CONFLICT (post_id) DO NOTHING;
+  
+  -- Update the appropriate counter
+  IF TG_TABLE_NAME = 'likes' AND TG_OP = 'INSERT' THEN
+    UPDATE public.post_analytics SET likes = likes + 1 WHERE post_id = NEW.post_id;
+  ELSIF TG_TABLE_NAME = 'likes' AND TG_OP = 'DELETE' THEN
+    UPDATE public.post_analytics SET likes = likes - 1 WHERE post_id = OLD.post_id;
+  ELSIF TG_TABLE_NAME = 'reposts' AND TG_OP = 'INSERT' THEN
+    UPDATE public.post_analytics SET reposts = reposts + 1 WHERE post_id = NEW.post_id;
+  ELSIF TG_TABLE_NAME = 'reposts' AND TG_OP = 'DELETE' THEN
+    UPDATE public.post_analytics SET reposts = reposts - 1 WHERE post_id = OLD.post_id;
+  END IF;
+  
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_likes_analytics
+AFTER INSERT OR DELETE ON public.likes
+FOR EACH ROW
+EXECUTE FUNCTION update_post_analytics();
+
+CREATE TRIGGER update_reposts_analytics
+AFTER INSERT OR DELETE ON public.reposts
+FOR EACH ROW
+EXECUTE FUNCTION update_post_analytics();
+
+-- Update comment counter when new reply is added
+CREATE OR REPLACE FUNCTION update_comments_counter()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.reply_to IS NOT NULL THEN
+    -- Create analytics record if it doesn't exist
+    INSERT INTO public.post_analytics (post_id, updated_at)
+    VALUES (NEW.reply_to, CURRENT_TIMESTAMP)
+    ON CONFLICT (post_id) DO NOTHING;
+    
+    -- Increment comments counter
+    UPDATE public.post_analytics SET comments = comments + 1 WHERE post_id = NEW.reply_to;
+  END IF;
+  
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_comments_counter
+AFTER INSERT ON public.posts
+FOR EACH ROW
+EXECUTE FUNCTION update_comments_counter();
+
+-- Helper functions for follower counts
+CREATE OR REPLACE FUNCTION get_user_post_count(p_user_id integer)
+RETURNS integer AS $$
+BEGIN
+  RETURN (SELECT COUNT(*) FROM public.posts WHERE user_id = p_user_id);
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION get_user_follower_count(p_user_id integer)
+RETURNS integer AS $$
+BEGIN
+  RETURN (SELECT COUNT(*) FROM public.follows WHERE following_id = p_user_id AND accepted = true);
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION get_user_following_count(p_user_id integer)
+RETURNS integer AS $$
+BEGIN
+  RETURN (SELECT COUNT(*) FROM public.follows WHERE follower_id = p_user_id AND accepted = true);
+END;
+$$ LANGUAGE plpgsql;
+
+-- Update topic counters
+CREATE OR REPLACE FUNCTION update_topic_counters()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    UPDATE public.topics SET post_count = post_count + 1 WHERE id = NEW.topic_id;
+  ELSIF TG_OP = 'DELETE' THEN
+    UPDATE public.topics SET post_count = post_count - 1 WHERE id = OLD.topic_id;
+  END IF;
+  
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_topic_post_counter
+AFTER INSERT OR DELETE ON public.post_topics
+FOR EACH ROW
+EXECUTE FUNCTION update_topic_counters();
+
+-- Update topic follower count
+CREATE OR REPLACE FUNCTION update_topic_follower_count()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'INSERT' AND NEW.explicit_follow = TRUE THEN
+    UPDATE public.topics SET follower_count = follower_count + 1 WHERE id = NEW.topic_id;
+  ELSIF TG_OP = 'DELETE' AND OLD.explicit_follow = TRUE THEN
+    UPDATE public.topics SET follower_count = follower_count - 1 WHERE id = OLD.topic_id;
+  ELSIF TG_OP = 'UPDATE' AND NEW.explicit_follow != OLD.explicit_follow THEN
+    IF NEW.explicit_follow = TRUE THEN
+      UPDATE public.topics SET follower_count = follower_count + 1 WHERE id = NEW.topic_id;
+    ELSE
+      UPDATE public.topics SET follower_count = follower_count - 1 WHERE id = NEW.topic_id;
+    END IF;
+  END IF;
+  
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_topic_follower_counter
+AFTER INSERT OR DELETE OR UPDATE OF explicit_follow ON public.user_interests
+FOR EACH ROW
+EXECUTE FUNCTION update_topic_follower_count();
+
+-- =============================================
+-- DATABASE OPTIMIZATION
+-- =============================================
+
+-- Table statistics settings
+ALTER TABLE public.posts SET (autovacuum_vacuum_scale_factor = 0.05);
+ALTER TABLE public.posts SET (autovacuum_analyze_scale_factor = 0.02);
+ALTER TABLE public.post_versions SET (autovacuum_vacuum_scale_factor = 0.05);
+ALTER TABLE public.post_versions SET (autovacuum_analyze_scale_factor = 0.02);
+ALTER TABLE public.oauth_access_tokens SET (autovacuum_vacuum_scale_factor = 0.1);
+ALTER TABLE public.likes SET (autovacuum_vacuum_scale_factor = 0.1);
+ALTER TABLE public.reposts SET (autovacuum_vacuum_scale_factor = 0.1);
+ALTER TABLE public.notifications SET (autovacuum_vacuum_scale_factor = 0.1);
+ALTER TABLE public.post_impressions SET (autovacuum_vacuum_scale_factor = 0.05);
+ALTER TABLE public.direct_messages SET (autovacuum_vacuum_scale_factor = 0.1);
+ALTER TABLE public.token_versions SET (autovacuum_vacuum_scale_factor = 0.1);
+ALTER TABLE public.certificate_versions SET (autovacuum_vacuum_scale_factor = 0.1);
+
+-- Fix foreign key relationships
+-- Posts table - Add group_id foreign key
+ALTER TABLE public.posts ADD CONSTRAINT fk_posts_group
+FOREIGN KEY (group_id) REFERENCES public.groups(id) ON DELETE CASCADE;
+
+-- Add current_version_id foreign key for posts
+ALTER TABLE public.posts ADD CONSTRAINT fk_posts_current_version
+FOREIGN KEY (current_version_id) REFERENCES public.post_versions(id) ON DELETE SET NULL;
+
+-- Add current_version_id foreign key for tokens
+ALTER TABLE public.api_tokens ADD CONSTRAINT fk_tokens_current_version
+FOREIGN KEY (current_version_id) REFERENCES public.token_versions(id) ON DELETE SET NULL;
+
+-- User table - Add theme and profile foreign keys if not exists
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_users_theme') THEN
+    ALTER TABLE public.users ADD CONSTRAINT fk_users_theme
+    FOREIGN KEY (current_theme_id) REFERENCES public.themes(id) ON DELETE SET NULL;
+  END IF;
+  
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_users_default_profile') THEN
+    ALTER TABLE public.users ADD CONSTRAINT fk_users_default_profile
+    FOREIGN KEY (default_profile_id) REFERENCES public.user_profiles(id) ON DELETE SET NULL;
+  END IF;
+END;
+$$;
+
+-- Add post partitioning recommendations
+COMMENT ON TABLE public.posts IS 'Consider partitioning this table by created_at month for better performance on large instances. For heavily used instances, consider using separate tables for post content and post metadata to improve performance.';
+COMMENT ON TABLE public.post_impressions IS 'Consider partitioning this table by created_at month for better performance. This table will grow large quickly.';
+COMMENT ON TABLE public.post_versions IS 'Consider partitioning this table by post_id for large instances to improve version lookup performance.';
+COMMENT ON TABLE public.notifications IS 'Consider partitioning this table by created_at month for better performance.';
+
+-- Add decentralization comments
+COMMENT ON TABLE public.users IS 'For decentralized deployments, ensure proper mapping of local users to their decentralized identifiers (DIDs).';
+COMMENT ON TABLE public.posts IS 'Content should be addressable via a CID for decentralized content addressing. Sign all content with user keys.';
+COMMENT ON TABLE public.token_gated_content IS 'Consider using ZK proofs for privacy-preserving token verification.';
+
+-- SECURITY REMINDERS
+COMMENT ON COLUMN public.users.password IS 'Passwords can be stored using multiple encryption methods based on the encryption_method column. Use appropriate algorithm-specific settings in encryption_params.';
+COMMENT ON COLUMN public.user_certificates.private_key IS 'Private keys must be encrypted at rest using the algorithm specified in encryption_method column.';
+COMMENT ON COLUMN public.user_payment_methods.provider_token IS 'Payment tokens must be stored securely following PCI DSS requirements';
+COMMENT ON COLUMN public.direct_messages.content IS 'For end-to-end encrypted messages, the content should be encrypted using the recipient''s public key.';
+
+-- DATABASE OPTIMIZATION RECOMMENDATIONS COMMENTS
+COMMENT ON DATABASE postgres IS 'Recommended settings for postgres.conf:
+- shared_buffers = 25% of system RAM (up to 8GB)
+- work_mem = 64MB (adjust based on concurrent queries)
+- maintenance_work_mem = 256MB
+- effective_cache_size = 75% of system RAM
+- default_statistics_target = 100
+- random_page_cost = 1.1 (for SSD storage)
+- wal_buffers = 16MB
+- min_wal_size = 1GB
+- max_wal_size = 4GB
+- checkpoint_completion_target = 0.9
+- max_connections = 100
+- autovacuum = on
+- max_parallel_workers_per_gather = 4
+- max_parallel_workers = 8
+- Enable pg_stat_statements extension for query optimization
+- For decentralized deployments, consider data sharding strategies across nodes
+';
