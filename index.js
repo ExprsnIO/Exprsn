@@ -63,21 +63,21 @@ const logger = winston.createLogger({
 // Configuration
 const config = {
   baseDomain: process.env.BASE_DOMAIN || 'exprsn.io',
-  port: process.env.PORT || 3000,
+  port: process.env.PORT || 80,
   sslPort: process.env.SSL_PORT || 443,
-  sitesDir: process.env.SITES_DIR || path.join(__dirname, 'Sites'),
+  sitesDir: process.env.SITES_DIR || path.join(__dirname, 'sites'),
   routesDir: process.env.ROUTES_DIR || path.join(__dirname, 'routes'),
   sharedNodeModules: process.env.SHARED_NODE_MODULES || path.join(__dirname, 'node_modules'),
   statusPollingInterval: process.env.STATUS_POLLING_INTERVAL || 30000, // 30 seconds
   configDir: process.env.CONFIG_DIR || path.join(__dirname, 'config'),
   backupsDir: process.env.BACKUPS_DIR || path.join(__dirname, 'backups'),
   sslCertsDir: process.env.SSL_CERTS_DIR || path.join(__dirname, 'ssl'),
-  sessionSecret: process.env.SESSION_SECRET || 'exprsn-secret-key-change-in-production',
+  sessionSecret: process.env.SESSION_SECRET || 'exprsn-session-secret-key',
   adminUsername: process.env.ADMIN_USERNAME || 'admin',
-  adminPassword: process.env.ADMIN_PASSWORD || 'password', // Hash this in production
-  jwtSecret: process.env.JWT_SECRET || 'exprsn-jwt-secret-key-change-in-production',
+  adminPassword: process.env.ADMIN_PASSWORD || '', // Hash this in production
+  jwtSecret: process.env.JWT_SECRET || 'exprsn-jwt-secret-key',
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '1d',
-  dbPath: process.env.DB_PATH || path.join(__dirname, 'config', 'exprsn.db'),
+  dbPath: process.env.DB_PATH || path.join(__dirname, 'db', 'exprsn.db'),
   uploadsDir: process.env.UPLOADS_DIR || path.join(__dirname, 'uploads'),
   mediaDir: process.env.MEDIA_DIR || path.join(__dirname, 'media'),
   // OAuth 2.0 configuration
