@@ -249,12 +249,12 @@ src/exprsn-payments/
 - [ ] Add S3/storage integration (TODO)
 - [x] Generate download URLs (/api/invoices/:id/pdf)
 
-#### 3. Database Migrations
-- [ ] Create `005-create-subscriptions.js`
-- [ ] Create `006-create-invoices.js`
-- [ ] Create `007-create-chargebacks.js`
-- [ ] Update Transaction model (add invoiceId FK)
-- [ ] Test migrations
+#### 3. Database Migrations ✅ COMPLETE
+- [x] Create `001-create-subscriptions.js` (145 lines, 7 indexes)
+- [x] Create `002-create-invoices.js` (165 lines, 8 indexes)
+- [x] Create `003-create-chargebacks.js` (155 lines, 10 indexes)
+- [x] Foreign key relationships configured
+- [ ] Test migrations (requires database setup)
 
 ### Short-term (This Week)
 
@@ -294,14 +294,14 @@ src/exprsn-payments/
 - **Services**: 3/3 complete ✅ (Subscription, Invoice, Chargeback)
 - **Routes**: 3/3 complete ✅ (Subscription, Invoice, Chargeback)
 - **Main Service**: 1/1 complete ✅ (index.js with all routes registered)
-- **Migrations**: 0/3 complete
+- **Migrations**: 3/3 complete ✅ (Subscriptions, Invoices, Chargebacks)
 - **Tests**: 0% complete
 
 ### Progress
 - **Start**: 60%
-- **Current**: 85%
-- **Gain**: +25%
-- **Remaining**: 15%
+- **Current**: 90%
+- **Gain**: +30%
+- **Remaining**: 10%
 
 ---
 
