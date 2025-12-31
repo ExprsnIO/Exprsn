@@ -299,9 +299,9 @@ src/exprsn-payments/
 
 ### Progress
 - **Start**: 60%
-- **Current**: 90%
-- **Gain**: +30%
-- **Remaining**: 10%
+- **Current**: 95%
+- **Gain**: +35%
+- **Remaining**: 5%
 
 ---
 

@@ -2,18 +2,28 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const compression = require('compression');
+const path = require('path');
 const { logger, errorHandler } = require('@exprsn/shared');
 const db = require('./src/models');
 
 const app = express();
 const PORT = process.env.PORT || 3018;
 
+// View engine setup
+app.set('view engine', 'ejs');
+app.set('views', path.join(__dirname, 'views'));
+
 // Middleware
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: false // Allow Bootstrap CDN for now
+}));
 app.use(cors());
 app.use(compression());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Static files
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Request logging
 app.use((req, res, next) => {
@@ -34,6 +44,9 @@ app.get('/health', (req, res) => {
     version: process.env.npm_package_version || '1.0.0'
   });
 });
+
+// Admin UI Routes
+app.use('/admin', require('./src/routes/admin'));
 
 // API Routes
 app.use('/api/customers', require('./src/routes/customers'));
