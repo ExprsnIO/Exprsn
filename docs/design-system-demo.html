@@ -1,0 +1,941 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Exprsn Unified Design System - Interactive Demo</title>
+
+  <!-- Exprsn Unified CSS -->
+  <link rel="stylesheet" href="../src/shared/public/css/exprsn-unified.css">
+
+  <!-- Font Awesome for Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+  <style>
+    /* Demo-specific styles */
+    .demo-section {
+      margin-bottom: var(--exprsn-spacing-3xl);
+    }
+
+    .demo-section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding-bottom: var(--exprsn-spacing-md);
+      margin-bottom: var(--exprsn-spacing-lg);
+      border-bottom: 2px solid var(--exprsn-border-color);
+    }
+
+    .demo-section-title {
+      font-size: var(--exprsn-font-size-2xl);
+      font-weight: 700;
+      color: var(--exprsn-text-primary);
+    }
+
+    .demo-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: var(--exprsn-spacing-lg);
+      margin-bottom: var(--exprsn-spacing-lg);
+    }
+
+    .demo-box {
+      padding: var(--exprsn-spacing-lg);
+      background: var(--exprsn-bg-primary);
+      border: 1px solid var(--exprsn-border-color);
+      border-radius: var(--exprsn-radius-lg);
+    }
+
+    .demo-box h4 {
+      margin-bottom: var(--exprsn-spacing-md);
+      font-size: var(--exprsn-font-size-lg);
+      color: var(--exprsn-text-primary);
+    }
+
+    .color-swatch {
+      display: flex;
+      align-items: center;
+      gap: var(--exprsn-spacing-md);
+      padding: var(--exprsn-spacing-sm);
+      margin-bottom: var(--exprsn-spacing-sm);
+      border-radius: var(--exprsn-radius-md);
+    }
+
+    .color-block {
+      width: 60px;
+      height: 60px;
+      border-radius: var(--exprsn-radius-md);
+      border: 2px solid var(--exprsn-border-color);
+    }
+
+    .color-info {
+      flex: 1;
+    }
+
+    .color-name {
+      font-weight: 600;
+      color: var(--exprsn-text-primary);
+      font-size: var(--exprsn-font-size-sm);
+    }
+
+    .color-value {
+      font-family: var(--exprsn-font-family-mono);
+      font-size: var(--exprsn-font-size-xs);
+      color: var(--exprsn-text-muted);
+    }
+
+    .component-showcase {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--exprsn-spacing-md);
+      margin-bottom: var(--exprsn-spacing-lg);
+    }
+
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: var(--exprsn-spacing-lg);
+      margin-bottom: var(--exprsn-spacing-2xl);
+    }
+
+    .stat-card {
+      padding: var(--exprsn-spacing-lg);
+      background: var(--exprsn-surface-raised);
+      border-radius: var(--exprsn-radius-xl);
+      box-shadow: var(--exprsn-shadow-md);
+      transition: var(--exprsn-transition-base);
+    }
+
+    .stat-card:hover {
+      transform: translateY(-4px);
+      box-shadow: var(--exprsn-shadow-xl);
+    }
+
+    .stat-icon {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 50px;
+      height: 50px;
+      border-radius: var(--exprsn-radius-lg);
+      margin-bottom: var(--exprsn-spacing-md);
+      font-size: var(--exprsn-font-size-2xl);
+    }
+
+    .stat-value {
+      font-size: var(--exprsn-font-size-3xl);
+      font-weight: 700;
+      color: var(--exprsn-text-primary);
+      margin-bottom: var(--exprsn-spacing-xs);
+    }
+
+    .stat-label {
+      font-size: var(--exprsn-font-size-sm);
+      color: var(--exprsn-text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .code-example {
+      background: var(--exprsn-bg-tertiary);
+      padding: var(--exprsn-spacing-md);
+      border-radius: var(--exprsn-radius-md);
+      margin-top: var(--exprsn-spacing-md);
+      overflow-x: auto;
+    }
+
+    .code-example pre {
+      margin: 0;
+      font-size: var(--exprsn-font-size-sm);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Navigation -->
+  <nav class="navbar">
+    <div class="navbar-brand">
+      <i class="fas fa-certificate"></i>
+      <span>Exprsn Design System</span>
+    </div>
+    <ul class="nav">
+      <li><a href="#components" class="nav-link active">Components</a></li>
+      <li><a href="#colors" class="nav-link">Colors</a></li>
+      <li><a href="#typography" class="nav-link">Typography</a></li>
+      <li><a href="#examples" class="nav-link">Examples</a></li>
+      <li>
+        <button class="btn-icon" onclick="toggleTheme()" title="Toggle Dark Mode">
+          <i class="fas fa-moon" id="themeIcon"></i>
+        </button>
+      </li>
+    </ul>
+  </nav>
+
+  <div class="container" style="padding-top: 2rem; padding-bottom: 4rem;">
+
+    <!-- Hero Section -->
+    <div style="text-align: center; padding: 4rem 0 3rem 0;">
+      <h1 style="font-size: 3.5rem; margin-bottom: 1rem; background: var(--exprsn-gradient-primary); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">
+        Exprsn Unified Design System
+      </h1>
+      <p style="font-size: 1.25rem; color: var(--exprsn-text-secondary); max-width: 800px; margin: 0 auto 2rem auto;">
+        A comprehensive, accessible, and beautiful design system for all 23 Exprsn microservices.
+        Built with modern CSS, featuring 100+ design tokens, 20+ components, and full dark mode support.
+      </p>
+      <div style="display: flex; gap: 1rem; justify-content: center; flex-wrap: wrap;">
+        <button class="btn btn-primary btn-lg">
+          <i class="fas fa-rocket"></i>
+          Get Started
+        </button>
+        <button class="btn btn-outline-primary btn-lg">
+          <i class="fas fa-book"></i>
+          Documentation
+        </button>
+      </div>
+    </div>
+
+    <!-- Stats Overview -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-icon" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+          <i class="fas fa-palette"></i>
+        </div>
+        <div class="stat-value">100+</div>
+        <div class="stat-label">Design Tokens</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-icon" style="background: linear-gradient(135deg, #10b981 0%, #06b6d4 100%); color: white;">
+          <i class="fas fa-cubes"></i>
+        </div>
+        <div class="stat-value">20+</div>
+        <div class="stat-label">UI Components</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-icon" style="background: linear-gradient(135deg, #f97316 0%, #ec4899 100%); color: white;">
+          <i class="fas fa-server"></i>
+        </div>
+        <div class="stat-value">23</div>
+        <div class="stat-label">Microservices</div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-icon" style="background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%); color: white;">
+          <i class="fas fa-universal-access"></i>
+        </div>
+        <div class="stat-value">WCAG AA</div>
+        <div class="stat-label">Accessible</div>
+      </div>
+    </div>
+
+    <!-- Color Palette Section -->
+    <section id="colors" class="demo-section">
+      <div class="demo-section-header">
+        <h2 class="demo-section-title">
+          <i class="fas fa-palette" style="color: var(--exprsn-primary);"></i>
+          Color Palette
+        </h2>
+      </div>
+
+      <div class="grid-2">
+        <!-- Primary Colors -->
+        <div class="demo-box">
+          <h4>Primary Colors</h4>
+          <div class="color-swatch">
+            <div class="color-block" style="background: var(--exprsn-primary);"></div>
+            <div class="color-info">
+              <div class="color-name">Primary</div>
+              <div class="color-value">--exprsn-primary</div>
+            </div>
+          </div>
+          <div class="color-swatch">
+            <div class="color-block" style="background: var(--exprsn-secondary);"></div>
+            <div class="color-info">
+              <div class="color-name">Secondary</div>
+              <div class="color-value">--exprsn-secondary</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Semantic Colors -->
+        <div class="demo-box">
+          <h4>Semantic Colors</h4>
+          <div class="color-swatch">
+            <div class="color-block" style="background: var(--exprsn-success);"></div>
+            <div class="color-info">
+              <div class="color-name">Success</div>
+              <div class="color-value">--exprsn-success</div>
+            </div>
+          </div>
+          <div class="color-swatch">
+            <div class="color-block" style="background: var(--exprsn-danger);"></div>
+            <div class="color-info">
+              <div class="color-name">Danger</div>
+              <div class="color-value">--exprsn-danger</div>
+            </div>
+          </div>
+          <div class="color-swatch">
+            <div class="color-block" style="background: var(--exprsn-warning);"></div>
+            <div class="color-info">
+              <div class="color-name">Warning</div>
+              <div class="color-value">--exprsn-warning</div>
+            </div>
+          </div>
+          <div class="color-swatch">
+            <div class="color-block" style="background: var(--exprsn-info);"></div>
+            <div class="color-info">
+              <div class="color-name">Info</div>
+              <div class="color-value">--exprsn-info</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Accent Colors -->
+        <div class="demo-box">
+          <h4>Accent Colors</h4>
+          <div class="color-swatch">
+            <div class="color-block" style="background: var(--exprsn-accent-pink);"></div>
+            <div class="color-info">
+              <div class="color-name">Pink</div>
+              <div class="color-value">--exprsn-accent-pink</div>
+            </div>
+          </div>
+          <div class="color-swatch">
+            <div class="color-block" style="background: var(--exprsn-accent-orange);"></div>
+            <div class="color-info">
+              <div class="color-name">Orange</div>
+              <div class="color-value">--exprsn-accent-orange</div>
+            </div>
+          </div>
+          <div class="color-swatch">
+            <div class="color-block" style="background: var(--exprsn-accent-cyan);"></div>
+            <div class="color-info">
+              <div class="color-name">Cyan</div>
+              <div class="color-value">--exprsn-accent-cyan</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Gradients -->
+        <div class="demo-box">
+          <h4>Gradients</h4>
+          <div class="color-swatch">
+            <div class="color-block" style="background: var(--exprsn-gradient-primary);"></div>
+            <div class="color-info">
+              <div class="color-name">Primary Gradient</div>
+              <div class="color-value">--exprsn-gradient-primary</div>
+            </div>
+          </div>
+          <div class="color-swatch">
+            <div class="color-block" style="background: var(--exprsn-gradient-success);"></div>
+            <div class="color-info">
+              <div class="color-name">Success Gradient</div>
+              <div class="color-value">--exprsn-gradient-success</div>
+            </div>
+          </div>
+          <div class="color-swatch">
+            <div class="color-block" style="background: var(--exprsn-gradient-warm);"></div>
+            <div class="color-info">
+              <div class="color-name">Warm Gradient</div>
+              <div class="color-value">--exprsn-gradient-warm</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Typography Section -->
+    <section id="typography" class="demo-section">
+      <div class="demo-section-header">
+        <h2 class="demo-section-title">
+          <i class="fas fa-font" style="color: var(--exprsn-primary);"></i>
+          Typography
+        </h2>
+      </div>
+
+      <div class="grid-2">
+        <div class="demo-box">
+          <h4>Headings</h4>
+          <h1>Heading 1</h1>
+          <h2>Heading 2</h2>
+          <h3>Heading 3</h3>
+          <h4>Heading 4</h4>
+          <h5>Heading 5</h5>
+          <h6>Heading 6</h6>
+        </div>
+
+        <div class="demo-box">
+          <h4>Text Styles</h4>
+          <p>This is a regular paragraph with <a href="#">a link</a> inside it.</p>
+          <p class="text-muted">This is muted text for secondary information.</p>
+          <p><strong>This is bold text</strong> and <em>this is italic text</em>.</p>
+          <p><code>This is inline code</code> for technical references.</p>
+          <pre><code>// This is a code block
+function example() {
+  return "Hello World";
+}</code></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- Buttons Section -->
+    <section id="components" class="demo-section">
+      <div class="demo-section-header">
+        <h2 class="demo-section-title">
+          <i class="fas fa-cube" style="color: var(--exprsn-primary);"></i>
+          Buttons
+        </h2>
+      </div>
+
+      <div class="demo-box">
+        <h4>Solid Buttons</h4>
+        <div class="component-showcase">
+          <button class="btn btn-primary">
+            <i class="fas fa-star"></i> Primary
+          </button>
+          <button class="btn btn-secondary">Secondary</button>
+          <button class="btn btn-success">Success</button>
+          <button class="btn btn-danger">Danger</button>
+          <button class="btn btn-warning">Warning</button>
+          <button class="btn btn-info">Info</button>
+          <button class="btn btn-primary" disabled>Disabled</button>
+        </div>
+
+        <h4 style="margin-top: 2rem;">Outline Buttons</h4>
+        <div class="component-showcase">
+          <button class="btn btn-outline-primary">
+            <i class="fas fa-heart"></i> Primary
+          </button>
+          <button class="btn btn-outline-secondary">Secondary</button>
+        </div>
+
+        <h4 style="margin-top: 2rem;">Button Sizes</h4>
+        <div class="component-showcase">
+          <button class="btn btn-primary btn-sm">Small</button>
+          <button class="btn btn-primary">Regular</button>
+          <button class="btn btn-primary btn-lg">Large</button>
+        </div>
+
+        <h4 style="margin-top: 2rem;">Icon Buttons</h4>
+        <div class="component-showcase">
+          <button class="btn-icon">
+            <i class="fas fa-search"></i>
+          </button>
+          <button class="btn-icon">
+            <i class="fas fa-heart"></i>
+          </button>
+          <button class="btn-icon">
+            <i class="fas fa-share"></i>
+          </button>
+          <button class="btn-icon">
+            <i class="fas fa-cog"></i>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Forms Section -->
+    <section class="demo-section">
+      <div class="demo-section-header">
+        <h2 class="demo-section-title">
+          <i class="fas fa-edit" style="color: var(--exprsn-primary);"></i>
+          Forms
+        </h2>
+      </div>
+
+      <div class="grid-2">
+        <div class="demo-box">
+          <h4>Form Controls</h4>
+
+          <div class="form-group">
+            <label class="form-label">Email Address</label>
+            <input type="email" class="form-control" placeholder="name@example.com">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Password</label>
+            <input type="password" class="form-control" placeholder="Enter password">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Select Option</label>
+            <select class="form-select">
+              <option>Choose...</option>
+              <option>Option 1</option>
+              <option>Option 2</option>
+              <option>Option 3</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Message</label>
+            <textarea class="form-control" rows="3" placeholder="Enter your message..."></textarea>
+          </div>
+
+          <div class="form-check">
+            <input type="checkbox" class="form-check-input" id="check1">
+            <label for="check1">Remember me</label>
+          </div>
+
+          <div class="form-check">
+            <input type="checkbox" class="form-check-input" id="check2">
+            <label for="check2">Subscribe to newsletter</label>
+          </div>
+
+          <button class="btn btn-primary" style="margin-top: 1rem;">Submit Form</button>
+        </div>
+
+        <div class="demo-box">
+          <h4>Input Groups</h4>
+
+          <div class="form-group">
+            <label class="form-label">With Icon</label>
+            <div class="input-group">
+              <span class="input-group-text">
+                <i class="fas fa-search"></i>
+              </span>
+              <input type="text" class="form-control" placeholder="Search...">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">With Button</label>
+            <div class="input-group">
+              <input type="text" class="form-control" placeholder="Enter URL">
+              <button class="btn btn-primary">Go</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Cards Section -->
+    <section class="demo-section">
+      <div class="demo-section-header">
+        <h2 class="demo-section-title">
+          <i class="fas fa-square" style="color: var(--exprsn-primary);"></i>
+          Cards
+        </h2>
+      </div>
+
+      <div class="demo-grid">
+        <div class="card">
+          <div class="card-header">
+            <h3 class="card-title">Basic Card</h3>
+          </div>
+          <div class="card-body">
+            <p class="card-text">This is a basic card with a header and body. Cards are versatile containers for content.</p>
+            <button class="btn btn-primary btn-sm">Learn More</button>
+          </div>
+        </div>
+
+        <div class="card card-primary">
+          <div class="card-header">
+            <h3 class="card-title">Primary Card</h3>
+          </div>
+          <div class="card-body">
+            <p class="card-text">This card has a primary colored header with gradient background.</p>
+          </div>
+        </div>
+
+        <div class="card card-success">
+          <div class="card-header">
+            <h3 class="card-title">Success Card</h3>
+          </div>
+          <div class="card-body">
+            <p class="card-text">This card has a success colored header, perfect for positive messages.</p>
+          </div>
+        </div>
+
+        <div class="card border-left-primary">
+          <div class="card-body">
+            <h3 class="card-title">Accent Border</h3>
+            <p class="card-text">Cards can have colored left borders as visual accents.</p>
+          </div>
+        </div>
+
+        <div class="card border-left-success">
+          <div class="card-body">
+            <h3 class="card-title">
+              <i class="fas fa-check-circle" style="color: var(--exprsn-success);"></i>
+              Success Accent
+            </h3>
+            <p class="card-text">Great for highlighting positive information or completed tasks.</p>
+          </div>
+        </div>
+
+        <div class="card border-left-warning">
+          <div class="card-body">
+            <h3 class="card-title">
+              <i class="fas fa-exclamation-triangle" style="color: var(--exprsn-warning);"></i>
+              Warning Accent
+            </h3>
+            <p class="card-text">Perfect for important notices that need attention.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Badges Section -->
+    <section class="demo-section">
+      <div class="demo-section-header">
+        <h2 class="demo-section-title">
+          <i class="fas fa-tag" style="color: var(--exprsn-primary);"></i>
+          Badges & Labels
+        </h2>
+      </div>
+
+      <div class="demo-box">
+        <h4>Solid Badges</h4>
+        <div class="component-showcase">
+          <span class="badge bg-primary">Primary</span>
+          <span class="badge bg-secondary">Secondary</span>
+          <span class="badge bg-success">Success</span>
+          <span class="badge bg-danger">Danger</span>
+          <span class="badge bg-warning">Warning</span>
+          <span class="badge bg-info">Info</span>
+        </div>
+
+        <h4 style="margin-top: 2rem;">Light Badges</h4>
+        <div class="component-showcase">
+          <span class="badge bg-primary-light">Primary</span>
+          <span class="badge bg-success-light">Success</span>
+          <span class="badge bg-danger-light">Danger</span>
+          <span class="badge bg-warning-light">Warning</span>
+        </div>
+
+        <h4 style="margin-top: 2rem;">With Icons</h4>
+        <div class="component-showcase">
+          <span class="badge bg-success">
+            <i class="fas fa-check"></i> Active
+          </span>
+          <span class="badge bg-danger">
+            <i class="fas fa-times"></i> Inactive
+          </span>
+          <span class="badge bg-warning">
+            <i class="fas fa-clock"></i> Pending
+          </span>
+          <span class="badge bg-info">
+            <i class="fas fa-info-circle"></i> Info
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Alerts Section -->
+    <section class="demo-section">
+      <div class="demo-section-header">
+        <h2 class="demo-section-title">
+          <i class="fas fa-bell" style="color: var(--exprsn-primary);"></i>
+          Alerts & Notifications
+        </h2>
+      </div>
+
+      <div class="alert alert-success">
+        <strong>Success!</strong> Your changes have been saved successfully.
+      </div>
+
+      <div class="alert alert-info">
+        <strong>Information:</strong> This is an informational message for users.
+      </div>
+
+      <div class="alert alert-warning">
+        <strong>Warning!</strong> Please review your settings before continuing.
+      </div>
+
+      <div class="alert alert-danger">
+        <strong>Error!</strong> There was a problem processing your request.
+      </div>
+    </section>
+
+    <!-- Tables Section -->
+    <section class="demo-section">
+      <div class="demo-section-header">
+        <h2 class="demo-section-title">
+          <i class="fas fa-table" style="color: var(--exprsn-primary);"></i>
+          Tables
+        </h2>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">User Management</h3>
+        </div>
+        <div class="card-body" style="padding: 0;">
+          <table class="table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><strong>John Doe</strong></td>
+                <td>john@example.com</td>
+                <td><span class="badge bg-primary-light">Admin</span></td>
+                <td><span class="badge bg-success-light"><i class="fas fa-check"></i> Active</span></td>
+                <td>
+                  <button class="btn-icon btn-sm"><i class="fas fa-edit"></i></button>
+                  <button class="btn-icon btn-sm"><i class="fas fa-trash"></i></button>
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Jane Smith</strong></td>
+                <td>jane@example.com</td>
+                <td><span class="badge bg-info-light">Editor</span></td>
+                <td><span class="badge bg-success-light"><i class="fas fa-check"></i> Active</span></td>
+                <td>
+                  <button class="btn-icon btn-sm"><i class="fas fa-edit"></i></button>
+                  <button class="btn-icon btn-sm"><i class="fas fa-trash"></i></button>
+                </td>
+              </tr>
+              <tr>
+                <td><strong>Bob Johnson</strong></td>
+                <td>bob@example.com</td>
+                <td><span class="badge bg-secondary">Viewer</span></td>
+                <td><span class="badge bg-warning-light"><i class="fas fa-clock"></i> Pending</span></td>
+                <td>
+                  <button class="btn-icon btn-sm"><i class="fas fa-edit"></i></button>
+                  <button class="btn-icon btn-sm"><i class="fas fa-trash"></i></button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Modal & Pagination Section -->
+    <section id="examples" class="demo-section">
+      <div class="demo-section-header">
+        <h2 class="demo-section-title">
+          <i class="fas fa-window-restore" style="color: var(--exprsn-primary);"></i>
+          Modal & Pagination
+        </h2>
+      </div>
+
+      <div class="grid-2">
+        <div class="demo-box">
+          <h4>Modal Example</h4>
+          <p class="text-muted">Click the button to see a modal dialog</p>
+          <button class="btn btn-primary" onclick="openModal()">
+            <i class="fas fa-plus"></i> Open Modal
+          </button>
+        </div>
+
+        <div class="demo-box">
+          <h4>Pagination</h4>
+          <ul class="pagination">
+            <li class="page-item disabled">
+              <a class="page-link" href="#">
+                <i class="fas fa-chevron-left"></i>
+              </a>
+            </li>
+            <li class="page-item active">
+              <a class="page-link" href="#">1</a>
+            </li>
+            <li class="page-item">
+              <a class="page-link" href="#">2</a>
+            </li>
+            <li class="page-item">
+              <a class="page-link" href="#">3</a>
+            </li>
+            <li class="page-item">
+              <a class="page-link" href="#">4</a>
+            </li>
+            <li class="page-item">
+              <a class="page-link" href="#">5</a>
+            </li>
+            <li class="page-item">
+              <a class="page-link" href="#">
+                <i class="fas fa-chevron-right"></i>
+              </a>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- Loading States Section -->
+    <section class="demo-section">
+      <div class="demo-section-header">
+        <h2 class="demo-section-title">
+          <i class="fas fa-spinner" style="color: var(--exprsn-primary);"></i>
+          Loading States
+        </h2>
+      </div>
+
+      <div class="grid-3">
+        <div class="demo-box" style="text-align: center;">
+          <h4>Small Spinner</h4>
+          <div class="spinner spinner-sm" style="margin: 1rem auto;"></div>
+        </div>
+
+        <div class="demo-box" style="text-align: center;">
+          <h4>Regular Spinner</h4>
+          <div class="spinner" style="margin: 1rem auto;"></div>
+        </div>
+
+        <div class="demo-box" style="text-align: center;">
+          <h4>Large Spinner</h4>
+          <div class="spinner spinner-lg" style="margin: 1rem auto;"></div>
+        </div>
+      </div>
+
+      <div class="demo-box" style="margin-top: 1.5rem;">
+        <h4>Skeleton Loading</h4>
+        <div class="loading-skeleton" style="height: 20px; margin-bottom: 0.5rem;"></div>
+        <div class="loading-skeleton" style="height: 20px; width: 80%; margin-bottom: 0.5rem;"></div>
+        <div class="loading-skeleton" style="height: 20px; width: 60%;"></div>
+      </div>
+    </section>
+
+    <!-- Code Example Section -->
+    <section class="demo-section">
+      <div class="demo-section-header">
+        <h2 class="demo-section-title">
+          <i class="fas fa-code" style="color: var(--exprsn-primary);"></i>
+          Usage Example
+        </h2>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h3 class="card-title">Quick Start</h3>
+        </div>
+        <div class="card-body">
+          <p>Add the unified CSS to your HTML file:</p>
+          <div class="code-example">
+            <pre><code>&lt;!-- Add to your HTML head --&gt;
+&lt;link rel="stylesheet" href="/css/exprsn-unified.css"&gt;
+
+&lt;!-- Example usage --&gt;
+&lt;div class="card shadow-lg"&gt;
+  &lt;div class="card-header bg-primary text-white"&gt;
+    &lt;h3 class="card-title"&gt;Welcome&lt;/h3&gt;
+  &lt;/div&gt;
+  &lt;div class="card-body"&gt;
+    &lt;p&gt;Start building with Exprsn!&lt;/p&gt;
+    &lt;button class="btn btn-primary"&gt;
+      &lt;i class="fas fa-rocket"&gt;&lt;/i&gt; Get Started
+    &lt;/button&gt;
+  &lt;/div&gt;
+&lt;/div&gt;</code></pre>
+          </div>
+
+          <p style="margin-top: 1.5rem;">Use CSS variables for custom styling:</p>
+          <div class="code-example">
+            <pre><code>.my-component {
+  color: var(--exprsn-text-primary);
+  background: var(--exprsn-bg-primary);
+  padding: var(--exprsn-spacing-md);
+  border-radius: var(--exprsn-radius-lg);
+  box-shadow: var(--exprsn-shadow-md);
+}</code></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </div>
+
+  <!-- Modal Example -->
+  <div id="demoModal" class="modal">
+    <div class="modal-overlay" onclick="closeModal()"></div>
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 class="modal-title">Example Modal</h3>
+        <button class="btn-icon" onclick="closeModal()">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <div class="modal-body">
+        <p>This is an example modal dialog using the Exprsn Unified Design System.</p>
+        <p class="text-muted">Modals are perfect for focused interactions, confirmations, or displaying detailed information without navigating away from the current page.</p>
+
+        <div class="form-group">
+          <label class="form-label">Example Input</label>
+          <input type="text" class="form-control" placeholder="Enter something...">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+        <button class="btn btn-primary">
+          <i class="fas fa-save"></i> Save Changes
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <script>
+    // Theme Toggle
+    function toggleTheme() {
+      const html = document.documentElement;
+      const currentTheme = html.getAttribute('data-theme');
+      const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
+      html.setAttribute('data-theme', newTheme);
+
+      const icon = document.getElementById('themeIcon');
+      icon.className = newTheme === 'dark' ? 'fas fa-sun' : 'fas fa-moon';
+
+      showToast(
+        newTheme === 'dark' ? 'Dark mode enabled' : 'Light mode enabled',
+        'success'
+      );
+    }
+
+    // Modal Functions
+    function openModal() {
+      document.getElementById('demoModal').classList.add('show');
+    }
+
+    function closeModal() {
+      document.getElementById('demoModal').classList.remove('show');
+    }
+
+    // Toast Notification
+    function showToast(message, type = 'info') {
+      const container = document.getElementById('toastContainer');
+      const toast = document.createElement('div');
+      toast.className = `toast ${type}`;
+      toast.innerHTML = `
+        <strong>${message}</strong>
+      `;
+
+      container.appendChild(toast);
+
+      setTimeout(() => {
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 300);
+      }, 3000);
+    }
+
+    // Smooth scrolling for anchor links
+    document.querySelectorAll('a[href^="#"]').forEach(anchor => {
+      anchor.addEventListener('click', function (e) {
+        e.preventDefault();
+        const target = document.querySelector(this.getAttribute('href'));
+        if (target) {
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      });
+    });
+
+    // Show welcome toast on load
+    window.addEventListener('load', () => {
+      setTimeout(() => {
+        showToast('Welcome to the Exprsn Design System Demo!', 'success');
+      }, 500);
+    });
+  </script>
+
+</body>
+</html>

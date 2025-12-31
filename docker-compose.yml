@@ -1,0 +1,540 @@
+# Exprsn Microservices - Docker Compose Configuration
+# Complete orchestration of all Exprsn services with CA authentication
+
+version: '3.8'
+
+services:
+  # ==========================================================================
+  # INFRASTRUCTURE SERVICES
+  # ==========================================================================
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: exprsn
+      POSTGRES_PASSWORD: exprsn_dev_password
+      POSTGRES_DB: exprsn_ca
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U exprsn"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ==========================================================================
+  # EXPRSN SERVICES
+  # ==========================================================================
+
+  # Certificate Authority (Core Service)
+  ca:
+    build:
+      context: ./src/exprsn-ca
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      SERVICE_ID: ca
+      SERVICE_TOKEN: ${CA_SERVICE_TOKEN:-ca-dev-token-12345}
+
+      # Database
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: exprsn_ca
+      DB_USER: exprsn
+      DB_PASSWORD: exprsn_dev_password
+
+      # Redis
+      REDIS_ENABLED: "true"
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+      # CA Configuration
+      CA_NAME: "Exprsn Root CA"
+      CA_DOMAIN: ca.exprsn.local
+      CA_COUNTRY: US
+      OCSP_ENABLED: "true"
+      CRL_ENABLED: "true"
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Authentication & SSO Service
+  auth:
+    build:
+      context: ./src/exprsn-auth
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      SERVICE_ID: auth
+      SERVICE_TOKEN: ${AUTH_SERVICE_TOKEN:-auth-dev-token-12345}
+
+      # CA Integration
+      CA_BASE_URL: http://ca:3000
+
+      # Database
+      DB_HOST: postgres
+      DB_NAME: exprsn_auth
+      DB_USER: exprsn
+      DB_PASSWORD: exprsn_dev_password
+
+      # Redis
+      REDIS_ENABLED: "true"
+      REDIS_HOST: redis
+    ports:
+      - "3001:3001"
+    depends_on:
+      - ca
+      - postgres
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Real-time Messaging Service (Spark)
+  spark:
+    build:
+      context: ./src/exprsn-spark
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: 3002
+      WS_PORT: 3003
+      SERVICE_ID: spark
+      SERVICE_TOKEN: ${SPARK_SERVICE_TOKEN:-spark-dev-token-12345}
+
+      # CA Integration
+      CA_BASE_URL: http://ca:3000
+
+      # Database
+      DB_HOST: postgres
+      DB_NAME: exprsn_spark
+      DB_USER: exprsn
+      DB_PASSWORD: exprsn_dev_password
+
+      # Redis (for pub/sub)
+      REDIS_ENABLED: "true"
+      REDIS_HOST: redis
+
+      # Service URLs
+      AUTH_BASE_URL: http://auth:3001
+      FILEVAULT_BASE_URL: http://filevault:3007
+    ports:
+      - "3002:3002"  # HTTP
+      - "3003:3003"  # WebSocket
+    depends_on:
+      - ca
+      - auth
+      - postgres
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Social Timeline Service
+  timeline:
+    build:
+      context: ./src/exprsn-timeline
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: 3004
+      SERVICE_ID: timeline
+      SERVICE_TOKEN: ${TIMELINE_SERVICE_TOKEN:-timeline-dev-token-12345}
+
+      # CA Integration
+      CA_BASE_URL: http://ca:3000
+
+      # Database
+      DB_HOST: postgres
+      DB_NAME: exprsn_timeline
+      DB_USER: exprsn
+      DB_PASSWORD: exprsn_dev_password
+
+      # Redis
+      REDIS_ENABLED: "true"
+      REDIS_HOST: redis
+
+      # Service URLs
+      AUTH_BASE_URL: http://auth:3001
+      MODERATOR_BASE_URL: http://moderator:3006
+      FILEVAULT_BASE_URL: http://filevault:3007
+      SPARK_BASE_URL: http://spark:3002
+      PREFETCH_BASE_URL: http://prefetch:3005
+    ports:
+      - "3004:3004"
+    depends_on:
+      - ca
+      - auth
+      - postgres
+      - redis
+      - moderator
+      - filevault
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Timeline Prefetch Service
+  prefetch:
+    build:
+      context: ./src/exprsn-prefetch
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: 3005
+      SERVICE_ID: prefetch
+      SERVICE_TOKEN: ${PREFETCH_SERVICE_TOKEN:-prefetch-dev-token-12345}
+
+      # CA Integration
+      CA_BASE_URL: http://ca:3000
+
+      # Redis (primary store for prefetched data)
+      REDIS_ENABLED: "true"
+      REDIS_HOST: redis
+
+      # Service URLs
+      TIMELINE_BASE_URL: http://timeline:3004
+    ports:
+      - "3005:3005"
+    depends_on:
+      - ca
+      - redis
+      - timeline
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Content Moderation Service
+  moderator:
+    build:
+      context: ./src/exprsn-moderator
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: 3006
+      SERVICE_ID: moderator
+      SERVICE_TOKEN: ${MODERATOR_SERVICE_TOKEN:-moderator-dev-token-12345}
+
+      # CA Integration
+      CA_BASE_URL: http://ca:3000
+
+      # Database
+      DB_HOST: postgres
+      DB_NAME: exprsn_moderator
+      DB_USER: exprsn
+      DB_PASSWORD: exprsn_dev_password
+
+      # Redis
+      REDIS_ENABLED: "true"
+      REDIS_HOST: redis
+
+      # Moderation Settings
+      MODERATION_LEVEL: medium
+      AUTO_MODERATION: "true"
+    ports:
+      - "3006:3006"
+    depends_on:
+      - ca
+      - postgres
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3006/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # File Storage Service (FileVault)
+  filevault:
+    build:
+      context: ./src/exprsn-filevault
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: 3007
+      SERVICE_ID: filevault
+      SERVICE_TOKEN: ${FILEVAULT_SERVICE_TOKEN:-filevault-dev-token-12345}
+
+      # CA Integration
+      CA_BASE_URL: http://ca:3000
+
+      # Database
+      DB_HOST: postgres
+      DB_NAME: exprsn_filevault
+      DB_USER: exprsn
+      DB_PASSWORD: exprsn_dev_password
+
+      # Storage Backend
+      STORAGE_TYPE: disk  # or 's3' for production
+      STORAGE_PATH: /var/exprsn/files
+      MAX_FILE_SIZE: 104857600  # 100MB
+
+      # Virus Scanning
+      VIRUS_SCAN_ENABLED: "true"
+
+      # Service URLs
+      MODERATOR_BASE_URL: http://moderator:3006
+    ports:
+      - "3007:3007"
+    volumes:
+      - filevault_data:/var/exprsn/files
+    depends_on:
+      - ca
+      - postgres
+      - moderator
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3007/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Media Gallery Service
+  gallery:
+    build:
+      context: ./src/exprsn-gallery
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: 3008
+      SERVICE_ID: gallery
+      SERVICE_TOKEN: ${GALLERY_SERVICE_TOKEN:-gallery-dev-token-12345}
+
+      # CA Integration
+      CA_BASE_URL: http://ca:3000
+
+      # Database
+      DB_HOST: postgres
+      DB_NAME: exprsn_gallery
+      DB_USER: exprsn
+      DB_PASSWORD: exprsn_dev_password
+
+      # Service URLs
+      FILEVAULT_BASE_URL: http://filevault:3007
+      TIMELINE_BASE_URL: http://timeline:3004
+    ports:
+      - "3008:3008"
+    depends_on:
+      - ca
+      - postgres
+      - filevault
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3008/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Live Streaming Service
+  live:
+    build:
+      context: ./src/exprsn-live
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: 3009
+      SERVICE_ID: live
+      SERVICE_TOKEN: ${LIVE_SERVICE_TOKEN:-live-dev-token-12345}
+
+      # CA Integration
+      CA_BASE_URL: http://ca:3000
+
+      # Database
+      DB_HOST: postgres
+      DB_NAME: exprsn_live
+      DB_USER: exprsn
+      DB_PASSWORD: exprsn_dev_password
+
+      # Streaming Provider
+      STREAMING_PROVIDER: cloudflare  # or 'self'
+      CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
+
+      # Service URLs
+      SPARK_BASE_URL: http://spark:3002
+      TIMELINE_BASE_URL: http://timeline:3004
+    ports:
+      - "3009:3009"
+    depends_on:
+      - ca
+      - postgres
+      - spark
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3009/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Workflow Automation Service
+  workflow:
+    build:
+      context: ./src/exprsn-workflow
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: production
+      PORT: 3017
+      SERVICE_ID: workflow
+      SERVICE_TOKEN: ${WORKFLOW_SERVICE_TOKEN:-workflow-dev-token-12345}
+
+      # CA Integration
+      CA_URL: http://ca:3000
+      CA_TOKEN_VALIDATION_ENABLED: "true"
+
+      # Database
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: exprsn_workflow
+      DB_USER: exprsn
+      DB_PASSWORD: exprsn_dev_password
+
+      # Redis
+      REDIS_ENABLED: "true"
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+      # Workflow Configuration
+      WORKFLOW_MAX_EXECUTION_TIME: 300000
+      WORKFLOW_MAX_STEPS: 100
+      WORKFLOW_MAX_ITERATIONS: 1000
+      WORKFLOW_ENABLE_VM_EXECUTION: "true"
+      WORKFLOW_VM_TIMEOUT: 30000
+      WORKFLOW_VM_MAX_MEMORY: 128
+
+      # JSONLex
+      JSONLEX_ENABLED: "true"
+      JSONLEX_VALIDATION_STRICT: "false"
+
+      # RBAC
+      RBAC_ENABLED: "true"
+
+      # Socket.IO
+      SOCKETIO_ENABLED: "true"
+      SOCKETIO_CORS_ORIGIN: "*"
+
+      # Bull Queue
+      BULL_ENABLED: "true"
+      BULL_REDIS_HOST: redis
+      BULL_REDIS_PORT: 6379
+      BULL_CONCURRENCY: 5
+
+      # Feature Flags
+      ENABLE_VISUAL_DESIGNER: "true"
+      ENABLE_TEMPLATES: "true"
+      ENABLE_WORKFLOW_VERSIONING: "true"
+      ENABLE_AUDIT_LOGGING: "true"
+      ENABLE_WORKFLOW_SCHEDULING: "true"
+    ports:
+      - "3017:3017"
+    depends_on:
+      - ca
+      - postgres
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3017/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ==========================================================================
+  # MONITORING & MANAGEMENT (Optional)
+  # ==========================================================================
+
+  # Nginx Reverse Proxy
+  nginx:
+    image: nginx:alpine
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - ca
+      - auth
+      - spark
+      - timeline
+      - prefetch
+      - moderator
+      - filevault
+      - gallery
+      - live
+      - workflow
+    restart: unless-stopped
+
+  # Prometheus (Metrics Collection)
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    restart: unless-stopped
+
+  # Grafana (Metrics Visualization)
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3100:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  filevault_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  default:
+    name: exprsn-network
